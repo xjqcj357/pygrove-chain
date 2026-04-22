@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/crypto",
+    "crates/consensus",
+    "crates/state",
+    "crates/vm",
+    "crates/node",
+    "crates/gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "Apache-2.0"
+repository = "https://github.com/xjqcj357/pygrove-chain"
+authors = ["PyGrove Chain contributors"]
+
+[workspace.dependencies]
+# Hashing
+blake3 = "1.5"
+sha3 = "0.10"
+# Determinism-first serialization
+ciborium = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+# Fixed-point math (no floats in consensus)
+fixed = "1.27"
+# Error handling
+thiserror = "1"
+anyhow = "1"
+# CLI
+clap = { version = "4", features = ["derive"] }
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Time / misc
+hex = "0.4"
+rand_core = "0.6"
+# Storage
+rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
+# PQ signatures
+# Falcon (FN-DSA) via RustCrypto — integer sampler for deterministic sigs
+fn-dsa = "0.1"
+# SLH-DSA (FIPS 205) for cold governance keys
+slh-dsa = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1
+strip = "symbols"

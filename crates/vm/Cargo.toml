@@ -1,0 +1,12 @@
+[package]
+name = "pygrove-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: sandboxed Python contract VM (v1.2 scope)"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+pygrove-state = { path = "../state" }
+thiserror = { workspace = true }

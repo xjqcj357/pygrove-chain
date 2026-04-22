@@ -1,0 +1,26 @@
+[package]
+name = "pygrove-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: node daemon and CLI"
+
+[[bin]]
+name = "pygrove-node"
+path = "src/main.rs"
+
+[[bin]]
+name = "pygrove-cli"
+path = "src/cli.rs"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+pygrove-crypto = { path = "../crypto" }
+pygrove-consensus = { path = "../consensus" }
+pygrove-state = { path = "../state" }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }

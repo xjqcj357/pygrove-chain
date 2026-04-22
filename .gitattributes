@@ -1,0 +1,15 @@
+# Force LF line endings for all text files so Windows devs and Linux CI agree.
+* text=auto eol=lf
+
+# Explicit lock for common source types.
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+
+# Binary.
+*.png   binary
+*.jpg   binary
+*.ico   binary

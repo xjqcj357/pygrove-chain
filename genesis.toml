@@ -1,0 +1,31 @@
+chain_id                = "pygrove-devnet-1"
+genesis_time_ms         = 1714003200000
+
+# Bitcoin-curve skeleton
+initial_bits            = 0x1d00ffff
+target_block_time_ms    = 600000
+retarget_interval       = 2016
+halving_interval_base   = 210000
+initial_reward_sat      = 5000000000      # 50 * 10^8
+
+# Accordion params
+accordion_epsilon       = 0.05
+accordion_beta_h        = 0.5             # mining bellow
+accordion_beta_a        = 0.5             # adoption bellow
+accordion_beta_s        = 0.25            # stability-seeking bias
+stability_window_blocks = 2016
+
+# Sybil guard for adoption bellow
+sybil_dust_floor_sat    = 100000
+sybil_min_age_blocks    = 2016
+sybil_require_paid_fee  = true
+
+# Crypto agility
+sig_algo                = 1               # 1 = Falcon512 (FN-DSA, integer sampler)
+hash_algo               = 1               # 1 = Blake3Xof512
+
+# Cold governance public key (SLH-DSA-128s) — placeholder, replaced at init
+governance_pubkey_hex   = ""
+
+# Initial accounts (usually empty for a pure PoW chain)
+initial_accounts        = []

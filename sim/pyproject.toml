@@ -1,0 +1,11 @@
+[project]
+name = "pygrove-sim"
+version = "0.1.0"
+description = "Accordion simulator: synthetic adversarial + real BTC backtest"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[tool.ruff]
+line-length = 100

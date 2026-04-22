@@ -1,0 +1,19 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+.idea/
+.vscode/
+*.iml
+.DS_Store
+# node data
+/data/
+/*.sqlite
+/*.db
+# sim outputs
+sim/__pycache__/
+sim/.venv/
+sim/out/
+*.pyc
+# build artifacts
+dist/
+release/

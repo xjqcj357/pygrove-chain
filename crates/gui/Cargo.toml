@@ -1,0 +1,17 @@
+[package]
+name = "pygrove-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: wallet GUI shell (Slint)"
+
+[[bin]]
+name = "pygrove-gui"
+path = "src/main.rs"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+# Slint pulled in once the GUI surface lands; v0.1 is a CLI-printing placeholder so the
+# release workflow always has a pygrove-gui artifact to publish.
+# slint = "1.8"

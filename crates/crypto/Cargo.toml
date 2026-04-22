@@ -1,0 +1,14 @@
+[package]
+name = "pygrove-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: post-quantum signature dispatch (Falcon-512, SLH-DSA-128s)"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+thiserror = { workspace = true }
+# Deterministic Falcon (integer sampler). Pin exact version to preserve byte-identical sigs.
+# fn-dsa = { workspace = true }     # uncomment when crate API stabilizes
+# slh-dsa = { workspace = true }    # likewise
