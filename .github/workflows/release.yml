@@ -1,0 +1,47 @@
+name: release-artifacts
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gui-windows:
+    name: pygrove-gui.exe (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build pygrove-gui.exe
+        run: cargo build --release -p pygrove-gui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pygrove-gui-windows-x86_64
+          path: target/release/pygrove-gui.exe
+          if-no-files-found: error
+
+  node-linux:
+    name: pygrove-node (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev llvm-dev pkg-config build-essential
+      - uses: Swatinem/rust-cache@v2
+      - name: Build node + cli
+        run: cargo build --release --bin pygrove-node --bin pygrove-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pygrove-node-linux-x86_64
+          path: |
+            target/release/pygrove-node
+            target/release/pygrove-cli
+          if-no-files-found: error

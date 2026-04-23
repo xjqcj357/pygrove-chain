@@ -13,11 +13,14 @@ slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    let cores = miner::num_cpus();
     ui.set_balance_sat("0".into());
     ui.set_block_height("0".into());
     ui.set_regime("equilibrium".into());
     ui.set_halving_progress("0 / 210000".into());
     ui.set_reward_sat("5000000000".into());
+    ui.set_cpu_cores(cores as i32);
+    ui.set_intensity(((cores / 2).max(1)) as f32);
 
     let miner_slot: Rc<RefCell<Option<MinerHandle>>> = Rc::new(RefCell::new(None));
     let last_sample: Rc<RefCell<(Instant, u64)>> = Rc::new(RefCell::new((Instant::now(), 0)));
@@ -55,11 +58,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_mining_on(false);
                     ui.set_mine_status("stopped".into());
                 } else {
+                    // Device 0 = CPU, device 1+ reserved for GPUs (v0.2).
+                    let device = ui.get_device_index();
+                    if device != 0 {
+                        ui.set_mine_status("GPU mining lands in v0.2".into());
+                        return;
+                    }
                     let url = ui.get_rpc_url().to_string();
-                    let handle = miner::start(url);
+                    let threads = ui.get_intensity().round().max(1.0) as usize;
+                    let handle = miner::start(url, threads);
                     *s = Some(handle);
                     ui.set_mining_on(true);
-                    ui.set_mine_status("mining".into());
+                    ui.set_mine_status(format!("mining ({threads} threads)").into());
                 }
             }
         }

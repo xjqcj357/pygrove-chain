@@ -1,9 +1,9 @@
-import { VerticalBox, HorizontalBox, TabWidget, Button, LineEdit, GroupBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, TabWidget, Button, LineEdit, GroupBox, ComboBox, Slider } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "PyGrove Wallet";
-    preferred-width: 920px;
-    preferred-height: 600px;
+    preferred-width: 960px;
+    preferred-height: 640px;
     background: #0b0d10;
 
     // Wallet
@@ -23,6 +23,10 @@ export component AppWindow inherits Window {
     in-out property <string> node_tip_hash: "—";
     in-out property <string> node_chain_id: "—";
     in-out property <bool>   mining_on: false;
+    in-out property <[string]> device_model: ["CPU", "GPU (coming in v0.2)"];
+    in-out property <int>    device_index: 0;
+    in-out property <float>  intensity: 4.0;      // CPU threads; capped to cores at runtime
+    in-out property <int>    cpu_cores: 1;
 
     callback connect_clicked();
     callback mine_toggle();
@@ -90,8 +94,36 @@ export component AppWindow inherits Window {
                         }
                     }
                     GroupBox {
-                        title: "CPU Miner";
+                        title: "Miner";
                         VerticalBox {
+                            spacing: 6px;
+                            HorizontalBox {
+                                Text { text: "Device:"; color: #e8f0ff; width: 80px; }
+                                ComboBox {
+                                    model: root.device_model;
+                                    current-index: root.device_index;
+                                    selected(v) => { root.device_index = self.current-index; }
+                                }
+                            }
+                            HorizontalBox {
+                                Text { text: "Intensity:"; color: #e8f0ff; width: 80px; }
+                                Slider {
+                                    minimum: 1;
+                                    maximum: root.cpu_cores > 1 ? root.cpu_cores : 16;
+                                    value: root.intensity;
+                                    changed(v) => { root.intensity = self.value; }
+                                }
+                                Text {
+                                    text: Math.round(root.intensity) + " thread" + (Math.round(root.intensity) == 1 ? "" : "s");
+                                    color: #c0ccd8;
+                                    width: 110px;
+                                }
+                            }
+                            Text {
+                                text: "detected cores: " + root.cpu_cores;
+                                color: #9aa6b2;
+                                font-size: 11px;
+                            }
                             Text { text: "status:   " + root.mine_status; color: #e8f0ff; }
                             Text { text: "hashrate: " + root.hashrate; color: #e8f0ff; }
                             Text { text: "accepted: " + root.accepted + "    rejected: " + root.rejected; color: #c0ccd8; }

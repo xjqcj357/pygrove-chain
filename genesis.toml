@@ -2,7 +2,7 @@ chain_id                = "pygrove-devnet-1"
 genesis_time_ms         = 1714003200000
 
 # Bitcoin-curve skeleton
-initial_bits            = 0x1d00ffff
+initial_bits            = 0x1f00ffff         # devnet — sub-second genesis. Retarget ramps real work.
 target_block_time_ms    = 600000
 retarget_interval       = 2016
 halving_interval_base   = 210000

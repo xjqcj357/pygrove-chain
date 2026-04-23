@@ -1,6 +1,6 @@
-//! CPU miner worker. Connects to a node's JSON-RPC, pulls templates, and submits
-//! solutions. Thread-per-core is the 3090/3080 drop-in point — swap the hash loop for an
-//! OpenCL kernel and the protocol doesn't change.
+//! Multi-threaded CPU miner. Same RPC protocol as the node-side mining tab; thread count
+//! is the "intensity" knob. GPU path (v0.2) replaces the inner hash loop with an OpenCL
+//! kernel and shares the counters.
 
 use anyhow::Context;
 use pygrove_consensus::pow::{hash_header, meets_target};
@@ -115,7 +115,13 @@ pub struct MinerHandle {
     pub rejected: Arc<AtomicU64>,
 }
 
-pub fn start(url: String) -> MinerHandle {
+pub fn num_cpus() -> usize {
+    thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+pub fn start(url: String, threads: usize) -> MinerHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let hashes = Arc::new(AtomicU64::new(0));
     let accepted = Arc::new(AtomicU64::new(0));
@@ -126,11 +132,24 @@ pub fn start(url: String) -> MinerHandle {
         accepted: accepted.clone(),
         rejected: rejected.clone(),
     };
-    thread::spawn(move || worker(url, stop, hashes, accepted, rejected));
+    let n = threads.max(1);
+    for t in 0..n {
+        let url = url.clone();
+        let stop = stop.clone();
+        let hashes = hashes.clone();
+        let accepted = accepted.clone();
+        let rejected = rejected.clone();
+        thread::Builder::new()
+            .name(format!("pg-miner-{t}"))
+            .spawn(move || worker(t as u64, n as u64, url, stop, hashes, accepted, rejected))
+            .expect("spawn miner thread");
+    }
     handle
 }
 
 fn worker(
+    thread_id: u64,
+    stride: u64,
     url: String,
     stop: Arc<AtomicBool>,
     hashes: Arc<AtomicU64>,
@@ -145,13 +164,14 @@ fn worker(
                 continue;
             }
         };
+        // Spread nonces across threads: thread t starts at `t`, strides by `n`.
+        tmpl.nonce = thread_id;
         let refresh_deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if stop.load(Ordering::Relaxed) {
                 return;
             }
-            // Hash a batch of nonces before checking the deadline / stop flag.
-            for _ in 0..8_192 {
+            for _ in 0..4_096 {
                 let hdr: BlockHeader = match (&tmpl).try_into() {
                     Ok(h) => h,
                     Err(_) => break,
@@ -165,7 +185,7 @@ fn worker(
                     };
                     break;
                 }
-                tmpl.nonce = tmpl.nonce.wrapping_add(1);
+                tmpl.nonce = tmpl.nonce.wrapping_add(stride);
             }
             if Instant::now() >= refresh_deadline {
                 break;
