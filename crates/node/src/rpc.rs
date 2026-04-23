@@ -12,7 +12,6 @@ use crate::mining::{now_ms, template_from_parent};
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
 use pygrove_core::{Block, BlockBody, BlockHeader};
 use serde::{Deserialize, Serialize};
-use std::io::Read as _;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
 
@@ -144,17 +143,13 @@ pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
     tracing::info!(bind, "rpc listening");
     for mut req in server.incoming_requests() {
         let resp = match (req.method(), req.url()) {
-            (Method::Post, "/rpc") => {
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    json_err(400, "read body")
-                } else {
-                    match serde_json::from_str::<RpcReq>(&body) {
-                        Ok(rpc) => dispatch(rpc, &state),
-                        Err(e) => json_err(400, &format!("bad request: {e}")),
-                    }
-                }
-            }
+            (Method::Post, "/rpc") => match std::io::read_to_string(req.as_reader()) {
+                Err(_) => json_err(400, "read body"),
+                Ok(body) => match serde_json::from_str::<RpcReq>(&body) {
+                    Ok(rpc) => dispatch(rpc, &state),
+                    Err(e) => json_err(400, &format!("bad request: {e}")),
+                },
+            },
             (Method::Get, "/") => json_ok(200, &serde_json::json!({ "pygrove": "v0.1" })),
             _ => json_err(404, "not found"),
         };
