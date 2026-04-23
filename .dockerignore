@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+sim/
+crates/gui/
+*.log
+*.md
