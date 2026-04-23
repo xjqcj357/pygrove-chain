@@ -12,3 +12,4 @@ pygrove-consensus = { path = "../consensus" }
 thiserror = { workspace = true }
 serde = { workspace = true }
 ciborium = { workspace = true }
+blake3 = { workspace = true }
