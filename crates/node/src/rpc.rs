@@ -12,7 +12,7 @@ use crate::mining::{now_ms, template_from_parent};
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
 use pygrove_core::{Block, BlockBody, BlockHeader};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
+use std::io::Read as _;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
 

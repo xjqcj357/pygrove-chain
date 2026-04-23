@@ -3,6 +3,7 @@
 use serde::Deserialize;
 use std::path::Path;
 
+#[allow(dead_code)] // many fields plumb through later — accordion eval, sybil guard, etc.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Genesis {
     pub chain_id: String,
