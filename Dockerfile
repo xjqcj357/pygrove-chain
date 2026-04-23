@@ -35,13 +35,20 @@ EXPOSE 8545
 USER pygrove
 WORKDIR /var/lib/pygrove
 
-# First boot inits if the data dir is empty, then runs with self-mine by default so the
-# container keeps producing blocks until external miners attach.
+# First boot inits if the data dir is empty. Self-mining is OFF by default — external
+# miners (your laptop / GPU boxes) drive the chain forward. Set PYGROVE_SELF_MINE=1 on
+# the container if you want the node to also mine (useful for solo dev loops, not for
+# multi-miner devnets where node self-mining races external submissions).
 ENTRYPOINT ["/bin/sh", "-c", "\
   if [ ! -s /var/lib/pygrove/chain.log ]; then \
     pygrove-node init --genesis /etc/pygrove/genesis.toml --data-dir /var/lib/pygrove; \
   fi; \
-  exec pygrove-node run --mine \
+  if [ \"${PYGROVE_SELF_MINE:-0}\" = \"1\" ]; then \
+    MINE_FLAG=--mine; \
+  else \
+    MINE_FLAG=; \
+  fi; \
+  exec pygrove-node run $MINE_FLAG \
     --genesis /etc/pygrove/genesis.toml \
     --data-dir /var/lib/pygrove \
     --rpc-bind 0.0.0.0:8545 \
