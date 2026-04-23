@@ -17,3 +17,6 @@ sim/out/
 # build artifacts
 dist/
 release/
+# local-only binaries (downloaded from CI artifacts)
+/pygrove/
+*.exe
