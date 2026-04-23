@@ -8,7 +8,7 @@ slint::include_modules!();
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.set_balance_sat("0".into());
-    ui.set_height("0".into());
+    ui.set_block_height("0".into());
     ui.set_regime("equilibrium".into());
     ui.set_halving_progress("0 / 210000".into());
     ui.set_reward_sat("5000000000".into());

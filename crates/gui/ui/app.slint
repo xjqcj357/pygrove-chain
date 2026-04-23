@@ -7,7 +7,7 @@ export component AppWindow inherits Window {
     background: #0b0d10;
 
     in-out property <string> balance_sat: "0";
-    in-out property <string> height: "0";
+    in-out property <string> block_height: "0";
     in-out property <string> regime: "equilibrium";
     in-out property <string> halving_progress: "0 / 210000";
     in-out property <string> reward_sat: "5000000000";
@@ -83,7 +83,7 @@ export component AppWindow inherits Window {
         }
 
         HorizontalBox {
-            Text { text: "height: " + root.height; color: #9aa6b2; }
+            Text { text: "block_height: " + root.block_height; color: #9aa6b2; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "v0.1.0"; color: #9aa6b2; }
         }
