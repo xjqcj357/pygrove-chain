@@ -2,15 +2,30 @@ import { VerticalBox, HorizontalBox, TabWidget, Button, LineEdit, GroupBox } fro
 
 export component AppWindow inherits Window {
     title: "PyGrove Wallet";
-    preferred-width: 880px;
-    preferred-height: 560px;
+    preferred-width: 920px;
+    preferred-height: 600px;
     background: #0b0d10;
 
+    // Wallet
     in-out property <string> balance_sat: "0";
     in-out property <string> block_height: "0";
     in-out property <string> regime: "equilibrium";
     in-out property <string> halving_progress: "0 / 210000";
     in-out property <string> reward_sat: "5000000000";
+
+    // Mining
+    in-out property <string> rpc_url: "http://66.42.93.85:8545";
+    in-out property <string> mine_status: "idle";
+    in-out property <string> hashrate: "0 H/s";
+    in-out property <string> accepted: "0";
+    in-out property <string> rejected: "0";
+    in-out property <string> current_target: "—";
+    in-out property <string> node_tip_hash: "—";
+    in-out property <string> node_chain_id: "—";
+    in-out property <bool>   mining_on: false;
+
+    callback connect_clicked();
+    callback mine_toggle();
 
     VerticalBox {
         padding: 16px;
@@ -54,9 +69,39 @@ export component AppWindow inherits Window {
                 title: "Mining";
                 VerticalBox {
                     padding: 12px;
-                    Text { text: "regime: " + root.regime; color: #e8f0ff; }
-                    Text { text: "halving progress: " + root.halving_progress; color: #e8f0ff; }
-                    Text { text: "reward (sat): " + root.reward_sat; color: #e8f0ff; }
+                    spacing: 10px;
+                    GroupBox {
+                        title: "Node";
+                        VerticalBox {
+                            HorizontalBox {
+                                Text { text: "RPC URL:"; color: #e8f0ff; }
+                                LineEdit {
+                                    text: root.rpc_url;
+                                    placeholder-text: "http://host:8545";
+                                    edited => { root.rpc_url = self.text; }
+                                }
+                                Button {
+                                    text: "Connect";
+                                    clicked => { root.connect_clicked(); }
+                                }
+                            }
+                            Text { text: "chain_id: " + root.node_chain_id; color: #c0ccd8; }
+                            Text { text: "tip:      " + root.node_tip_hash; color: #c0ccd8; }
+                        }
+                    }
+                    GroupBox {
+                        title: "CPU Miner";
+                        VerticalBox {
+                            Text { text: "status:   " + root.mine_status; color: #e8f0ff; }
+                            Text { text: "hashrate: " + root.hashrate; color: #e8f0ff; }
+                            Text { text: "accepted: " + root.accepted + "    rejected: " + root.rejected; color: #c0ccd8; }
+                            Text { text: "target:   " + root.current_target; color: #9aa6b2; }
+                            Button {
+                                text: root.mining_on ? "Stop mining" : "Start mining";
+                                clicked => { root.mine_toggle(); }
+                            }
+                        }
+                    }
                 }
             }
             Tab {
@@ -83,7 +128,7 @@ export component AppWindow inherits Window {
         }
 
         HorizontalBox {
-            Text { text: "block_height: " + root.block_height; color: #9aa6b2; }
+            Text { text: "height: " + root.block_height; color: #9aa6b2; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "v0.1.0"; color: #9aa6b2; }
         }

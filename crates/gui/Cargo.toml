@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "PyGrove Chain: wallet GUI shell (Slint)"
+description = "PyGrove Chain: wallet + miner GUI (Slint)"
 
 [[bin]]
 name = "pygrove-gui"
@@ -12,7 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 pygrove-core = { path = "../core" }
+pygrove-consensus = { path = "../consensus" }
 slint = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+ureq = { version = "2.10", default-features = false, features = ["json", "tls"] }
 
 [build-dependencies]
 slint-build = { workspace = true }
