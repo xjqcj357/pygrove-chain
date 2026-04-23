@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PyGrove Chain Explorer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg2: #11151a;
+    --fg: #e8f0ff;
+    --dim: #9aa6b2;
+    --line: #1e252d;
+    --accent: #7cc4ff;
+    --ok: #7cffa4;
+    --warn: #ffb95c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  header h1 .accent { color: var(--accent); }
+  header .meta { color: var(--dim); font-size: 12px; }
+  main { padding: 20px 24px; max-width: 1280px; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat {
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .stat .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .val { color: var(--fg); font-size: 18px; margin-top: 4px; word-break: break-all; }
+  .stat .val.mono-small { font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  thead { background: #151a21; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td.hash { color: var(--accent); font-size: 12px; }
+  td.hash a { color: inherit; text-decoration: none; }
+  td.hash a:hover { text-decoration: underline; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #161c24; }
+  .sectionTitle { margin: 0 0 10px 0; font-size: 14px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  #err { color: var(--warn); padding: 10px 14px; background: var(--bg2); border: 1px solid var(--warn); border-radius: 6px; margin-bottom: 16px; display: none; }
+  #detail {
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  #detail pre {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #detail .close {
+    float: right;
+    color: var(--dim);
+    cursor: pointer;
+    background: none;
+    border: none;
+    font: inherit;
+  }
+  footer { padding: 14px 24px; color: var(--dim); font-size: 11px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Py<span class="accent">Grove</span> Chain Explorer</h1>
+  <span class="meta" id="endpoint"></span>
+</header>
+
+<main>
+  <div id="err"></div>
+
+  <section class="stats">
+    <div class="stat"><div class="label">Chain ID</div><div class="val mono-small" id="s-chain">—</div></div>
+    <div class="stat"><div class="label">Height</div><div class="val" id="s-height">—</div></div>
+    <div class="stat"><div class="label">Tip hash</div><div class="val mono-small" id="s-tip">—</div></div>
+    <div class="stat"><div class="label">Bits</div><div class="val" id="s-bits">—</div></div>
+    <div class="stat"><div class="label">Target</div><div class="val mono-small" id="s-target">—</div></div>
+    <div class="stat"><div class="label">Sig / Hash algo</div><div class="val" id="s-algo">—</div></div>
+  </section>
+
+  <div id="detail">
+    <button class="close" onclick="closeDetail()">close ✕</button>
+    <h3 class="sectionTitle" id="detail-title">Block —</h3>
+    <pre id="detail-body"></pre>
+  </div>
+
+  <h2 class="sectionTitle">Recent blocks</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:80px">height</th>
+        <th>hash</th>
+        <th style="width:180px">when</th>
+        <th style="width:120px">nonce</th>
+      </tr>
+    </thead>
+    <tbody id="blocks">
+      <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:24px;">loading…</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<footer>
+  pygrove-chain v0.1 — append-only CBOR log + blake3-XOF-512 headers
+</footer>
+
+<script>
+  const endpoint = location.origin + "/rpc";
+  document.getElementById("endpoint").textContent = endpoint;
+
+  async function rpc(method, params) {
+    const r = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params: params || {} }),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    return j.result;
+  }
+
+  function truncHash(h) {
+    if (!h || h.length < 16) return h || "—";
+    return h.slice(0, 8) + "…" + h.slice(-8);
+  }
+
+  function ago(ms) {
+    const d = Date.now() - Number(ms);
+    if (d < 0) return "(future)";
+    if (d < 1000) return d + " ms ago";
+    if (d < 60_000) return Math.floor(d / 1000) + "s ago";
+    if (d < 3_600_000) return Math.floor(d / 60_000) + "m ago";
+    return Math.floor(d / 3_600_000) + "h ago";
+  }
+
+  function setErr(msg) {
+    const el = document.getElementById("err");
+    if (msg) { el.textContent = msg; el.style.display = "block"; }
+    else { el.style.display = "none"; }
+  }
+
+  async function refresh() {
+    try {
+      const info = await rpc("get_info");
+      setErr(null);
+      document.getElementById("s-chain").textContent = info.chain_id;
+      document.getElementById("s-height").textContent = info.height;
+      document.getElementById("s-tip").textContent = info.tip_hash;
+      document.getElementById("s-bits").textContent = "0x" + Number(info.bits).toString(16).padStart(8, "0");
+      document.getElementById("s-target").textContent = info.target;
+      document.getElementById("s-algo").textContent = "sig=" + info.sig_algo + " / hash=" + info.hash_algo;
+
+      const blocks = await rpc("list_blocks", { limit: 50 });
+      const tbody = document.getElementById("blocks");
+      if (!blocks.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--dim);text-align:center;padding:24px;">no blocks yet — waiting for the first miner</td></tr>';
+        return;
+      }
+      tbody.innerHTML = blocks.map(b =>
+        `<tr>
+           <td>${b.height}</td>
+           <td class="hash"><a href="#" onclick="showBlock(${b.height});return false;">${truncHash(b.hash)}</a></td>
+           <td>${ago(b.timestamp_ms)}</td>
+           <td>${b.nonce}</td>
+         </tr>`
+      ).join("");
+    } catch (e) {
+      setErr("rpc error: " + e.message);
+    }
+  }
+
+  async function showBlock(height) {
+    try {
+      const b = await rpc("get_block", { height });
+      document.getElementById("detail-title").textContent = "Block " + height;
+      document.getElementById("detail-body").textContent = JSON.stringify(b, null, 2);
+      document.getElementById("detail").style.display = "block";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setErr("get_block: " + e.message);
+    }
+  }
+
+  function closeDetail() {
+    document.getElementById("detail").style.display = "none";
+  }
+
+  refresh();
+  setInterval(refresh, 2000);
+</script>
+
+</body>
+</html>

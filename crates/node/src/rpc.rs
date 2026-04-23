@@ -1,9 +1,13 @@
-//! Minimal HTTP JSON-RPC for miner clients.
+//! Minimal HTTP JSON-RPC for miner clients + an embedded block explorer.
 //!
 //! Methods:
 //!   get_info       -> { height, tip_hash, bits, target, chain_id, sig_algo, hash_algo }
 //!   get_template   -> { header, target, target_hex }
 //!   submit_block   -> { ok, height, hash }  |  { error }
+//!   list_blocks    -> [{ height, hash, timestamp_ms, nonce, tx_count }]
+//!   get_block      -> { header, tx_count, hash }
+//!
+//! HTTP GET /  serves the bundled explorer (dark-theme HTML, polls /rpc).
 //!
 //! One thread per connection (tiny_http default). Sync. State is a shared `Arc<NodeState>`.
 
@@ -138,6 +142,38 @@ struct SubmitResp {
     hash: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ListReq {
+    #[serde(default = "default_list_limit")]
+    limit: usize,
+}
+fn default_list_limit() -> usize {
+    50
+}
+
+#[derive(Debug, Serialize)]
+struct BlockSummary {
+    height: u64,
+    hash: String,
+    timestamp_ms: u64,
+    nonce: u64,
+    tx_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetBlockReq {
+    height: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct BlockDetail {
+    hash: String,
+    tx_count: usize,
+    header: HeaderJson,
+}
+
+const EXPLORER_HTML: &str = include_str!("explorer.html");
+
 pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
     let server = Server::http(bind).map_err(|e| anyhow::anyhow!("bind {bind}: {e}"))?;
     tracing::info!(bind, "rpc listening");
@@ -150,7 +186,8 @@ pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
                     Err(e) => json_err(400, &format!("bad request: {e}")),
                 },
             },
-            (Method::Get, "/") => json_ok(200, &serde_json::json!({ "pygrove": "v0.1" })),
+            (Method::Get, "/") | (Method::Get, "/index.html") => html_ok(EXPLORER_HTML),
+            (Method::Get, "/healthz") => json_ok(200, &serde_json::json!({ "pygrove": "v0.1" })),
             _ => json_err(404, "not found"),
         };
         let _ = req.respond(resp);
@@ -170,6 +207,13 @@ fn json_err(code: u16, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     json_ok(code, &RpcErr { error: msg.into() })
 }
 
+fn html_ok(body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    let h: Header = "Content-Type: text/html; charset=utf-8".parse().unwrap();
+    Response::from_string(body.to_string())
+        .with_status_code(200)
+        .with_header(h)
+}
+
 fn dispatch(rpc: RpcReq, st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
     match rpc.method.as_str() {
         "get_info" => match info(st) {
@@ -187,8 +231,45 @@ fn dispatch(rpc: RpcReq, st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
             },
             Err(e) => json_err(400, &format!("bad params: {e}")),
         },
+        "list_blocks" => {
+            let req: ListReq = serde_json::from_value(rpc.params).unwrap_or(ListReq { limit: 50 });
+            match list_blocks(st, req.limit.min(500)) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(500, &e.to_string()),
+            }
+        }
+        "get_block" => match serde_json::from_value::<GetBlockReq>(rpc.params) {
+            Ok(req) => match get_block(st, req.height) {
+                Ok(Some(v)) => json_ok(200, &RpcOk { result: v }),
+                Ok(None) => json_err(404, "block not found"),
+                Err(e) => json_err(500, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
         m => json_err(400, &format!("unknown method: {m}")),
     }
+}
+
+fn list_blocks(st: &NodeState, limit: usize) -> anyhow::Result<Vec<BlockSummary>> {
+    let recent = st.store.recent(limit)?;
+    Ok(recent
+        .into_iter()
+        .map(|b| BlockSummary {
+            height: b.header.height,
+            hash: hex::encode(hash_header(&b.header)),
+            timestamp_ms: b.header.timestamp_ms,
+            nonce: b.header.nonce,
+            tx_count: b.body.txs.len(),
+        })
+        .collect())
+}
+
+fn get_block(st: &NodeState, height: u64) -> anyhow::Result<Option<BlockDetail>> {
+    Ok(st.store.get_by_height(height)?.map(|b| BlockDetail {
+        hash: hex::encode(hash_header(&b.header)),
+        tx_count: b.body.txs.len(),
+        header: HeaderJson::from(&b.header),
+    }))
 }
 
 fn info(st: &NodeState) -> anyhow::Result<InfoResp> {

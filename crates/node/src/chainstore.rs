@@ -73,4 +73,17 @@ impl ChainStore {
     pub fn len(&self) -> anyhow::Result<u64> {
         Ok(self.load_all()?.len() as u64)
     }
+
+    /// Most recent `n` blocks, newest first. Cheap-ish for v0.1 since the whole
+    /// log is in memory anyway; GroveDB replaces this in v1.0.
+    pub fn recent(&self, n: usize) -> anyhow::Result<Vec<Block>> {
+        let all = self.load_all()?;
+        let start = all.len().saturating_sub(n);
+        Ok(all.into_iter().skip(start).rev().collect())
+    }
+
+    pub fn get_by_height(&self, height: u64) -> anyhow::Result<Option<Block>> {
+        let all = self.load_all()?;
+        Ok(all.into_iter().find(|b| b.header.height == height))
+    }
 }
