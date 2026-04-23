@@ -20,7 +20,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.82"
+          toolchain: "1.85"
           components: rustfmt, clippy
 
       - name: System deps for rocksdb / crypto crates
