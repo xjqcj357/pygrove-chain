@@ -16,12 +16,10 @@ pub fn clamp_retarget(actual_timespan_ms: u64, expected_timespan_ms: u64) -> (u6
 pub fn bitcoin_retarget(old_target: [u8; 32], actual_ms: u64, expected_ms: u64) -> [u8; 32] {
     let (actual, expected) = clamp_retarget(actual_ms, expected_ms);
     let hi = u128::from_be_bytes(old_target[..16].try_into().unwrap());
-    // Avoid overflow by splitting the multiply.
-    let num = hi as u128;
-    let new_hi = num
+    let new_hi = hi
         .saturating_mul(actual as u128)
         .checked_div(expected as u128)
-        .unwrap_or(num);
+        .unwrap_or(hi);
     let mut out = [0u8; 32];
     out[..16].copy_from_slice(&new_hi.to_be_bytes());
     out[16..].copy_from_slice(&old_target[16..]);

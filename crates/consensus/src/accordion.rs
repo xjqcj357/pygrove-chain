@@ -57,9 +57,9 @@ fn ln_fixed(x: I64F64) -> I64F64 {
     let mut sum = y;
     let mut term = y;
     for n in 1..16 {
-        term = term * y2;
+        term *= y2;
         let denom = I64F64::from_num(2 * n + 1);
-        sum = sum + term / denom;
+        sum += term / denom;
     }
     sum * I64F64::from_num(2)
 }
