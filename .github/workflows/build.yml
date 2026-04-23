@@ -22,10 +22,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: System deps for rocksdb / crypto crates
+      - name: System deps (rocksdb / crypto / slint)
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev llvm-dev pkg-config build-essential
+          sudo apt-get install -y \
+            clang libclang-dev llvm-dev pkg-config build-essential \
+            libfontconfig1-dev libxkbcommon-dev
 
       - uses: Swatinem/rust-cache@v2
 

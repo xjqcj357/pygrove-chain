@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 pygrove-core = { path = "../core" }
-# Slint pulled in once the GUI surface lands; v0.1 is a CLI-printing placeholder so the
-# release workflow always has a pygrove-gui artifact to publish.
-# slint = "1.8"
+slint = { workspace = true }
+
+[build-dependencies]
+slint-build = { workspace = true }

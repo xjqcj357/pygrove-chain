@@ -46,6 +46,9 @@ rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
 fn-dsa = "0.1"
 # SLH-DSA (FIPS 205) for cold governance keys
 slh-dsa = "0.1"
+# GUI — Slint (pure Rust, no Qt C++ deps)
+slint = { version = "1.8", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software"] }
+slint-build = "1.8"
 
 [profile.release]
 opt-level = 3

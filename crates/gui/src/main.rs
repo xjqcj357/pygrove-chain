@@ -1,16 +1,16 @@
-//! pygrove-gui — wallet GUI shell.
+//! pygrove-gui — wallet GUI shell (Slint).
 //!
-//! v0.1 is a terminal placeholder that prints the planned surface. The Slint UI lands
-//! in v1.1 once the node RPC is wired; this binary exists from day one so release
-//! artifacts are stable.
+//! The node RPC client isn't wired yet; the window renders with placeholder state so the
+//! release pipeline has a real GUI artifact from v0.1 onward.
 
-fn main() {
-    println!("pygrove-gui v0.1 — GUI shell placeholder");
-    println!();
-    println!("Planned panes:");
-    println!("  Wallet       send / receive / balance / address book");
-    println!("  Mining       accordion regime, hashrate bellow, adoption bellow");
-    println!("  Reflection   live view of the reflect subtree");
-    println!("  Emission     supply curve, halving progress, reward");
-    println!("  Governance   UpgradeCrypto proposals and cold-key signing");
+slint::include_modules!();
+
+fn main() -> Result<(), slint::PlatformError> {
+    let ui = AppWindow::new()?;
+    ui.set_balance_sat("0".into());
+    ui.set_height("0".into());
+    ui.set_regime("equilibrium".into());
+    ui.set_halving_progress("0 / 210000".into());
+    ui.set_reward_sat("5000000000".into());
+    ui.run()
 }

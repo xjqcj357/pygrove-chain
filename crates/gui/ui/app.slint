@@ -1,0 +1,91 @@
+import { VerticalBox, HorizontalBox, TabWidget, Button, LineEdit, GroupBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "PyGrove Wallet";
+    preferred-width: 880px;
+    preferred-height: 560px;
+    background: #0b0d10;
+
+    in-out property <string> balance_sat: "0";
+    in-out property <string> height: "0";
+    in-out property <string> regime: "equilibrium";
+    in-out property <string> halving_progress: "0 / 210000";
+    in-out property <string> reward_sat: "5000000000";
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 12px;
+
+        Text {
+            text: "PyGrove Chain";
+            font-size: 22px;
+            color: #e8f0ff;
+        }
+
+        TabWidget {
+            Tab {
+                title: "Wallet";
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 8px;
+                    GroupBox {
+                        title: "Balance";
+                        VerticalBox {
+                            Text { text: "sat: " + root.balance_sat; color: #e8f0ff; }
+                        }
+                    }
+                    GroupBox {
+                        title: "Send";
+                        VerticalBox {
+                            HorizontalBox {
+                                Text { text: "to:"; color: #e8f0ff; }
+                                LineEdit { placeholder-text: "account id (hex)"; }
+                            }
+                            HorizontalBox {
+                                Text { text: "amount:"; color: #e8f0ff; }
+                                LineEdit { placeholder-text: "sat"; }
+                            }
+                            Button { text: "Sign + submit"; }
+                        }
+                    }
+                }
+            }
+            Tab {
+                title: "Mining";
+                VerticalBox {
+                    padding: 12px;
+                    Text { text: "regime: " + root.regime; color: #e8f0ff; }
+                    Text { text: "halving progress: " + root.halving_progress; color: #e8f0ff; }
+                    Text { text: "reward (sat): " + root.reward_sat; color: #e8f0ff; }
+                }
+            }
+            Tab {
+                title: "Reflection";
+                VerticalBox {
+                    padding: 12px;
+                    Text {
+                        text: "short (144) / long (2016) / epoch (210000) windows will render here once the node RPC is wired.";
+                        color: #c0ccd8;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            Tab {
+                title: "Governance";
+                VerticalBox {
+                    padding: 12px;
+                    Text {
+                        text: "UpgradeCrypto proposals and cold-key signing.";
+                        color: #c0ccd8;
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            Text { text: "height: " + root.height; color: #9aa6b2; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "v0.1.0"; color: #9aa6b2; }
+        }
+    }
+}
