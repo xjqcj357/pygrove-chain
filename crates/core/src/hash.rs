@@ -4,7 +4,10 @@
 //! activated via an `UpgradeCrypto` governance tx without forking historical blocks.
 
 use blake3::Hasher as Blake3Hasher;
-use sha3::{Digest as _, Shake256, digest::{ExtendableOutput, Update, XofReader}};
+use sha3::{
+    digest::{ExtendableOutput, Update, XofReader},
+    Shake256,
+};
 
 pub type Digest32 = [u8; 32];
 pub type Digest64 = [u8; 64];
