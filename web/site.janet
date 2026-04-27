@@ -176,7 +176,8 @@ Served by ~80 lines of <a href="https://janet-lang.org">Janet</a> — a Lisp dia
         offset (or (scan-number offset-str) 0)
         gtime (or (scan-number gtime-str) 0)]
     (if (< offset 0)
-      (let [secs-until (math/floor (/ (- 0 offset) 1000))]
+      (let [ms-until (- 0 offset)
+            secs-until (div ms-until 1000)]
         (string
           "<div class=\"countdown\">"
           "<div class=\"lbl\">PRE-GENESIS &middot; fair launch lockout</div>"
