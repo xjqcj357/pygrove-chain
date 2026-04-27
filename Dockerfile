@@ -48,7 +48,8 @@ ENTRYPOINT ["/bin/sh", "-c", "\
   else \
     MINE_FLAG=; \
   fi; \
-  exec pygrove-node run $MINE_FLAG \
+  THROTTLE_FLAG=\"--mine-throttle-ms ${PYGROVE_THROTTLE_MS:-0}\"; \
+  exec pygrove-node run $MINE_FLAG $THROTTLE_FLAG \
     --genesis /etc/pygrove/genesis.toml \
     --data-dir /var/lib/pygrove \
     --rpc-bind 0.0.0.0:8545 \

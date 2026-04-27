@@ -325,8 +325,26 @@ fn template(st: &NodeState) -> anyhow::Result<TemplateResp> {
 }
 
 fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
-    // Fair-launch hard gate. No block submissions accepted until launch time.
+    let hdr: BlockHeader = req.header.try_into()?;
+    let block = Block {
+        header: hdr.clone(),
+        body: BlockBody { txs: vec![] },
+    };
+    try_apply_block(st, &block)?;
+    Ok(SubmitResp {
+        ok: true,
+        height: hdr.height,
+        hash: hex::encode(hash_header(&hdr)),
+    })
+}
+
+/// Single source of truth for "is this block acceptable right now?". Both the
+/// JSON-RPC `submit_block` and the in-process self-miner go through this. Any
+/// rule that gates fair launch must live here; otherwise the self-miner can
+/// quietly bypass it.
+pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
     let now = crate::mining::now_ms();
+    // 1. Fair-launch hard gate.
     if now < st.genesis_time_ms {
         let secs = (st.genesis_time_ms - now) / 1000;
         anyhow::bail!(
@@ -337,7 +355,7 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
         );
     }
 
-    let hdr: BlockHeader = req.header.try_into()?;
+    let hdr = &block.header;
     let tip = st.store.tip()?;
     let (expected_parent, expected_height, parent_ts) = match tip {
         Some(b) => (
@@ -351,12 +369,16 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
         anyhow::bail!("stale parent");
     }
     if hdr.height != expected_height {
-        anyhow::bail!("wrong height: got {} expected {}", hdr.height, expected_height);
+        anyhow::bail!(
+            "wrong height: got {} expected {}",
+            hdr.height,
+            expected_height
+        );
     }
     if hdr.bits != st.bits {
         anyhow::bail!("wrong bits");
     }
-    // Monotonic time: a block may not be timestamped before its parent.
+    // 2. Monotonic time: a block may not be timestamped before its parent.
     if hdr.timestamp_ms < parent_ts {
         anyhow::bail!(
             "non-monotonic timestamp: {} < parent {}",
@@ -364,7 +386,7 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
             parent_ts
         );
     }
-    // Bitcoin-style 2-hour clock-skew tolerance.
+    // 3. Bitcoin-style 2-hour clock-skew tolerance.
     if hdr.timestamp_ms > now + FUTURE_TIME_TOLERANCE_MS {
         anyhow::bail!(
             "timestamp too far in future: {} > now+2h ({})",
@@ -372,19 +394,12 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
             now + FUTURE_TIME_TOLERANCE_MS
         );
     }
+    // 4. PoW.
     let target = target_from_bits(hdr.bits);
-    let h = hash_header(&hdr);
+    let h = hash_header(hdr);
     if !meets_target(&h, &target) {
         anyhow::bail!("hash does not meet target");
     }
-    let block = Block {
-        header: hdr,
-        body: BlockBody { txs: vec![] },
-    };
-    st.store.append(&block)?;
-    Ok(SubmitResp {
-        ok: true,
-        height: block.header.height,
-        hash: hex::encode(h),
-    })
+    st.store.append(block)?;
+    Ok(())
 }

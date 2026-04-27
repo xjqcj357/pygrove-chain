@@ -38,6 +38,10 @@ enum Cmd {
     Run {
         #[arg(long)]
         mine: bool,
+        /// Sleep between hash attempts in the self-miner. 0 = full speed.
+        /// 20 ≈ 50 H/s on commodity CPU — slow enough that any laptop wins races.
+        #[arg(long, default_value_t = 0)]
+        mine_throttle_ms: u64,
         #[arg(long, default_value = "./data")]
         data_dir: String,
         #[arg(long, default_value = "genesis.toml")]
@@ -70,10 +74,11 @@ fn main() -> anyhow::Result<()> {
         } => cmd_init(&genesis, &data_dir, &key),
         Cmd::Run {
             mine,
+            mine_throttle_ms,
             data_dir,
             genesis,
             rpc_bind,
-        } => cmd_run(&genesis, &data_dir, &rpc_bind, mine),
+        } => cmd_run(&genesis, &data_dir, &rpc_bind, mine, mine_throttle_ms),
         Cmd::ShowEmission { data_dir, genesis } => cmd_show_emission(&genesis, &data_dir),
         Cmd::ShowReflect { data_dir } => cmd_show_reflect(&data_dir),
     }
@@ -115,7 +120,13 @@ fn cmd_init(genesis_path: &str, data_dir: &str, _key: &str) -> anyhow::Result<()
     Ok(())
 }
 
-fn cmd_run(genesis_path: &str, data_dir: &str, rpc_bind: &str, self_mine: bool) -> anyhow::Result<()> {
+fn cmd_run(
+    genesis_path: &str,
+    data_dir: &str,
+    rpc_bind: &str,
+    self_mine: bool,
+    mine_throttle_ms: u64,
+) -> anyhow::Result<()> {
     let g = Genesis::load(genesis_path).context("load genesis")?;
     let store = ChainStore::open(data_dir)?;
     if store.tip()?.is_none() {
@@ -143,16 +154,29 @@ fn cmd_run(genesis_path: &str, data_dir: &str, rpc_bind: &str, self_mine: bool) 
     }
 
     if self_mine {
+        tracing::info!(
+            mine_throttle_ms,
+            "self-miner enabled (throttle = {}ms / hash, ~{} H/s)",
+            mine_throttle_ms,
+            if mine_throttle_ms == 0 { 0 } else { 1000 / mine_throttle_ms.max(1) }
+        );
         let st = state.clone();
-        thread::spawn(move || self_miner_loop(st));
+        thread::spawn(move || self_miner_loop(st, mine_throttle_ms));
     }
 
     rpc::serve(rpc_bind, state)
 }
 
-fn self_miner_loop(st: Arc<NodeState>) {
+fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
     let target = target_from_bits(st.bits);
     loop {
+        // Hard gate: don't even build templates while pre-genesis. Saves CPU
+        // and keeps the log quiet during the lockout window.
+        let now = now_ms();
+        if now < st.genesis_time_ms {
+            thread::sleep(Duration::from_secs(30));
+            continue;
+        }
         let tip = match st.store.tip() {
             Ok(Some(b)) => b,
             _ => {
@@ -178,8 +202,11 @@ fn self_miner_loop(st: Arc<NodeState>) {
                     header: hdr.clone(),
                     body: pygrove_core::BlockBody { txs: vec![] },
                 };
-                if let Err(e) = st.store.append(&block) {
-                    tracing::warn!(%e, "self-mine append failed");
+                // Go through the same gate as JSON-RPC submit_block — if a
+                // remote miner won the race a moment ago, we'll see "stale
+                // parent" here and quietly drop our find.
+                if let Err(e) = rpc::try_apply_block(&st, &block) {
+                    tracing::debug!(%e, "self-mine apply rejected");
                     break;
                 }
                 tracing::info!(
@@ -191,6 +218,11 @@ fn self_miner_loop(st: Arc<NodeState>) {
                 break;
             }
             hdr.nonce = hdr.nonce.wrapping_add(1);
+            // Throttle: sleep between hash attempts so external miners
+            // dominate. Default 0 = full speed (legacy / dev convenience).
+            if throttle_ms > 0 {
+                thread::sleep(Duration::from_millis(throttle_ms));
+            }
             // Refresh tip every ~2M nonces in case a remote miner accepted first.
             if hdr.nonce & 0x001f_ffff == 0 {
                 if let Ok(Some(cur)) = st.store.tip() {
