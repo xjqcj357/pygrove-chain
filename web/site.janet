@@ -79,17 +79,22 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>PyGrove Chain</title>
+<title>PyGrove Chain — testnet</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta name="description" content="A self-reflective, crypto-agile, stability-seeking proof-of-work blockchain." />
 <style>
-:root{--bg:#0b0d10;--bg2:#11151a;--fg:#e8f0ff;--dim:#9aa6b2;--line:#1e252d;--accent:#7cc4ff;--ok:#7cffa4}
+:root{--bg:#0b0d10;--bg2:#11151a;--fg:#e8f0ff;--dim:#9aa6b2;--line:#1e252d;--accent:#7cc4ff;--ok:#7cffa4;--warn:#ffb95c}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);color:var(--fg);min-height:100vh}
 .wrap{max-width:880px;margin:0 auto;padding:64px 28px 96px}
 h1{margin:0 0 4px 0;font-size:42px;letter-spacing:-0.5px;font-weight:600}
 h1 .accent{color:var(--accent)}
+.tnet{display:inline-block;padding:3px 10px;background:var(--bg2);border:1px solid var(--warn);color:var(--warn);border-radius:4px;font-size:11px;margin-left:10px;vertical-align:middle;letter-spacing:1px}
 .tag{color:var(--dim);font-size:14px;margin-bottom:36px}
+.countdown{background:linear-gradient(135deg,#1a1f2a 0%,#11151a 100%);border:1px solid var(--accent);border-radius:8px;padding:22px 24px;margin:28px 0}
+.countdown .lbl{color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.countdown .clock{font-size:32px;color:var(--fg);margin:10px 0 4px 0;font-variant-numeric:tabular-nums}
+.countdown .when{color:var(--dim);font-size:12px}
 .live{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:28px 0}
 .cell{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
 .cell .lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
@@ -112,8 +117,10 @@ footer a:hover{color:var(--accent)}
 <body>
 <div class="wrap">
 
-<h1>Py<span class="accent">Grove</span> Chain</h1>
+<h1>Py<span class="accent">Grove</span> Chain<span class="tnet">TESTNET</span></h1>
 <div class="tag">A self-reflective, crypto-agile, stability-seeking proof-of-work blockchain.</div>
+
+{COUNTDOWN_BLOCK}
 
 <section>
 <p>PyGrove inherits Bitcoin's economic skeleton — 10-minute block target, 2,016-block retargets, 210,000-block halving epochs, 21,000,000-coin hard cap — and adds three layers on top: a two-bellow accordion that lets issuance breathe with hashrate and adoption, a reflection subtree that records the chain's own statistics on-chain, and a crypto-agility layer that makes algorithm replacement a routine governance transaction.</p>
@@ -149,19 +156,51 @@ Served by ~80 lines of <a href="https://janet-lang.org">Janet</a> — a Lisp dia
 
 # ---- request handler --------------------------------------------------------
 
+(defn fmt-countdown [secs]
+  "Pretty-print a positive integer second count as a T-Xd Yh Zm Ws string."
+  (let [d (div secs 86400)
+        h (mod (div secs 3600) 24)
+        m (mod (div secs 60) 60)
+        s (mod secs 60)]
+    (cond
+      (> d 0) (string "T-" d "d " h "h " m "m " s "s")
+      (> h 0) (string "T-" h "h " m "m " s "s")
+      (> m 0) (string "T-" m "m " s "s")
+      (string "T-" s "s"))))
+
+(defn countdown-block [body]
+  "Render the pre-genesis lockout banner if now < genesis_time_ms. The node
+   serves genesis_offset_ms in get_info — negative means pre-genesis."
+  (let [offset-str (extract body "genesis_offset_ms" "0")
+        gtime-str (extract body "genesis_time_ms" "0")
+        offset (or (scan-number offset-str) 0)
+        gtime (or (scan-number gtime-str) 0)]
+    (if (< offset 0)
+      (let [secs-until (math/floor (/ (- 0 offset) 1000))]
+        (string
+          "<div class=\"countdown\">"
+          "<div class=\"lbl\">PRE-GENESIS &middot; fair launch lockout</div>"
+          "<div class=\"clock\">" (fmt-countdown secs-until) "</div>"
+          "<div class=\"when\">Block 1 submission opens at unix_ms=" gtime
+          ". The chain stays at height 0 until then. No premine.</div>"
+          "</div>"))
+      "")))
+
 (defn render-page []
   "Server-side render: fetch get_info from the node, splice into HTML."
   (let [body (rpc-call "get_info")
         chain-id (extract body "chain_id" "—")
         height (extract body "height" "—")
-        tip (extract body "tip_hash" "—")]
+        tip (extract body "tip_hash" "—")
+        countdown (countdown-block body)]
     # ->> threads the value through as the LAST arg of each form.
     # Janet's `string/replace` signature is (string/replace patt subst str),
     # so the source string belongs in the trailing position.
     (->> page-template
          (string/replace "{CHAIN_ID}" chain-id)
          (string/replace "{HEIGHT}" height)
-         (string/replace "{TIP}" tip))))
+         (string/replace "{TIP}" tip)
+         (string/replace "{COUNTDOWN_BLOCK}" countdown))))
 
 (defn http-respond [stream html]
   (let [body (string html)

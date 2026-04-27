@@ -25,8 +25,30 @@ pub struct Genesis {
     pub hash_algo: u8,
     #[serde(default)]
     pub governance_pubkey_hex: String,
+    /// 32-byte hex string baked into the genesis coinbase as proof-of-no-prior-
+    /// knowledge. Conventionally a fresh Bitcoin block hash — anyone can verify
+    /// it didn't exist before its own block timestamp.
+    #[serde(default)]
+    pub genesis_headline_hex: String,
     #[serde(default)]
     pub initial_accounts: Vec<String>,
+}
+
+impl Genesis {
+    /// Decode the headline hex into a 32-byte coinbase slot. Returns zeros if
+    /// the field is empty (legacy / dev configs).
+    pub fn headline_bytes(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        if self.genesis_headline_hex.is_empty() {
+            return out;
+        }
+        if let Ok(bytes) = hex::decode(&self.genesis_headline_hex) {
+            if bytes.len() == 32 {
+                out.copy_from_slice(&bytes);
+            }
+        }
+        out
+    }
 }
 
 impl Genesis {

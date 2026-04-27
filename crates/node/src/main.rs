@@ -85,8 +85,16 @@ fn cmd_init(genesis_path: &str, data_dir: &str, _key: &str) -> anyhow::Result<()
     if store.height()? > 0 || store.tip()?.is_some() {
         anyhow::bail!("data dir {data_dir} already initialized");
     }
-    tracing::info!(chain = %g.chain_id, "mining genesis block at bits={:#010x}", g.initial_bits);
-    let coinbase = [0u8; 32]; // v0.1 — no miner account yet
+    tracing::info!(
+        chain = %g.chain_id,
+        genesis_time_ms = g.genesis_time_ms,
+        headline = %g.genesis_headline_hex,
+        "mining genesis block at bits={:#010x}",
+        g.initial_bits
+    );
+    // Genesis coinbase = headline bytes (proof of no prior knowledge).
+    // Post-genesis blocks use coinbase = miner account ID.
+    let coinbase = g.headline_bytes();
     let hdr = template_from_parent(
         [0u8; 32],
         0_u64.wrapping_sub(1),
@@ -120,7 +128,19 @@ fn cmd_run(genesis_path: &str, data_dir: &str, rpc_bind: &str, self_mine: bool) 
         coinbase: [0u8; 32],
         sig_algo: g.sig_algo,
         hash_algo: g.hash_algo,
+        genesis_time_ms: g.genesis_time_ms,
     });
+    let now = mining::now_ms();
+    if now < g.genesis_time_ms {
+        let secs = (g.genesis_time_ms - now) / 1000;
+        tracing::info!(
+            secs_until_genesis = secs,
+            "PRE-GENESIS: submit_block locked until {}",
+            g.genesis_time_ms
+        );
+    } else {
+        tracing::info!("post-genesis: accepting block submissions");
+    }
 
     if self_mine {
         let st = state.clone();

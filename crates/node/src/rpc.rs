@@ -26,7 +26,14 @@ pub struct NodeState {
     pub coinbase: [u8; 32],
     pub sig_algo: u8,
     pub hash_algo: u8,
+    /// Wall-clock milliseconds at which the chain accepts block 1+ submissions.
+    /// Before this, `submit_block` returns "pre-genesis: launch in Ns".
+    pub genesis_time_ms: u64,
 }
+
+/// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
+/// far in the future relative to the node's wall clock.
+const FUTURE_TIME_TOLERANCE_MS: u64 = 2 * 60 * 60 * 1000; // 2 hours
 
 #[derive(Debug, Deserialize)]
 struct RpcReq {
@@ -54,6 +61,9 @@ struct InfoResp {
     target: String,
     sig_algo: u8,
     hash_algo: u8,
+    genesis_time_ms: u64,
+    /// `now_ms - genesis_time_ms`. Negative means pre-genesis (chain frozen).
+    genesis_offset_ms: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -278,6 +288,8 @@ fn info(st: &NodeState) -> anyhow::Result<InfoResp> {
         Some(b) => (b.header.height, hex::encode(hash_header(&b.header))),
         None => (0, hex::encode([0u8; 32])),
     };
+    let now = crate::mining::now_ms();
+    let offset = now as i64 - st.genesis_time_ms as i64;
     Ok(InfoResp {
         chain_id: st.chain_id.clone(),
         height,
@@ -286,6 +298,8 @@ fn info(st: &NodeState) -> anyhow::Result<InfoResp> {
         target: hex::encode(target_from_bits(st.bits)),
         sig_algo: st.sig_algo,
         hash_algo: st.hash_algo,
+        genesis_time_ms: st.genesis_time_ms,
+        genesis_offset_ms: offset,
     })
 }
 
@@ -311,11 +325,27 @@ fn template(st: &NodeState) -> anyhow::Result<TemplateResp> {
 }
 
 fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
+    // Fair-launch hard gate. No block submissions accepted until launch time.
+    let now = crate::mining::now_ms();
+    if now < st.genesis_time_ms {
+        let secs = (st.genesis_time_ms - now) / 1000;
+        anyhow::bail!(
+            "pre-genesis: launch in {}s (genesis_time_ms={}, now_ms={})",
+            secs,
+            st.genesis_time_ms,
+            now
+        );
+    }
+
     let hdr: BlockHeader = req.header.try_into()?;
     let tip = st.store.tip()?;
-    let (expected_parent, expected_height) = match tip {
-        Some(b) => (hash_header(&b.header), b.header.height + 1),
-        None => ([0u8; 32], 0),
+    let (expected_parent, expected_height, parent_ts) = match tip {
+        Some(b) => (
+            hash_header(&b.header),
+            b.header.height + 1,
+            b.header.timestamp_ms,
+        ),
+        None => ([0u8; 32], 0, 0),
     };
     if hdr.parent != expected_parent {
         anyhow::bail!("stale parent");
@@ -325,6 +355,22 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
     }
     if hdr.bits != st.bits {
         anyhow::bail!("wrong bits");
+    }
+    // Monotonic time: a block may not be timestamped before its parent.
+    if hdr.timestamp_ms < parent_ts {
+        anyhow::bail!(
+            "non-monotonic timestamp: {} < parent {}",
+            hdr.timestamp_ms,
+            parent_ts
+        );
+    }
+    // Bitcoin-style 2-hour clock-skew tolerance.
+    if hdr.timestamp_ms > now + FUTURE_TIME_TOLERANCE_MS {
+        anyhow::bail!(
+            "timestamp too far in future: {} > now+2h ({})",
+            hdr.timestamp_ms,
+            now + FUTURE_TIME_TOLERANCE_MS
+        );
     }
     let target = target_from_bits(hdr.bits);
     let h = hash_header(&hdr);

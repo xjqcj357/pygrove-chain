@@ -73,6 +73,17 @@
     margin-bottom: 20px;
     display: none;
   }
+  #pregenesis {
+    background: linear-gradient(135deg, #1a1f2a 0%, #11151a 100%);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  #pregenesis .lbl { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  #pregenesis .countdown { font-size: 28px; color: var(--fg); margin: 8px 0 4px 0; font-variant-numeric: tabular-nums; }
+  #pregenesis .when { color: var(--dim); font-size: 12px; }
   #detail pre {
     margin: 0;
     font-size: 12px;
@@ -100,6 +111,12 @@
 
 <main>
   <div id="err"></div>
+
+  <div id="pregenesis">
+    <div class="lbl">PRE-GENESIS · fair launch lockout</div>
+    <div class="countdown" id="pre-countdown">—</div>
+    <div class="when" id="pre-when">—</div>
+  </div>
 
   <section class="stats">
     <div class="stat"><div class="label">Chain ID</div><div class="val mono-small" id="s-chain">—</div></div>
@@ -171,6 +188,19 @@
     else { el.style.display = "none"; }
   }
 
+  function fmtCountdown(ms) {
+    if (ms <= 0) return "0s";
+    const s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (d > 0) return d + "d " + h + "h " + m + "m " + sec + "s";
+    if (h > 0) return h + "h " + m + "m " + sec + "s";
+    if (m > 0) return m + "m " + sec + "s";
+    return sec + "s";
+  }
+
   async function refresh() {
     try {
       const info = await rpc("get_info");
@@ -181,6 +211,19 @@
       document.getElementById("s-bits").textContent = "0x" + Number(info.bits).toString(16).padStart(8, "0");
       document.getElementById("s-target").textContent = info.target;
       document.getElementById("s-algo").textContent = "sig=" + info.sig_algo + " / hash=" + info.hash_algo;
+
+      // Pre-genesis countdown — visible only while now < genesis_time_ms.
+      const pg = document.getElementById("pregenesis");
+      if (info.genesis_offset_ms < 0) {
+        pg.style.display = "block";
+        document.getElementById("pre-countdown").textContent =
+          "T-" + fmtCountdown(-info.genesis_offset_ms);
+        const when = new Date(Number(info.genesis_time_ms)).toUTCString();
+        document.getElementById("pre-when").textContent =
+          "Block 1 submission opens " + when + ". The chain is frozen at height 0 until then. No premine.";
+      } else {
+        pg.style.display = "none";
+      }
 
       const blocks = await rpc("list_blocks", { limit: 50 });
       const tbody = document.getElementById("blocks");

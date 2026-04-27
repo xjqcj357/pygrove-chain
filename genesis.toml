@@ -1,8 +1,30 @@
-chain_id                = "pygrove-devnet-1"
-genesis_time_ms         = 1714003200000
+# PyGrove Chain — TESTNET genesis
+#
+# Fair-launch ceremony:
+#   - genesis_time_ms is a future, publicly-announced wall-clock time.
+#   - The genesis block is initialized at deploy with that timestamp baked in.
+#   - The node refuses any block submission while now() < genesis_time_ms.
+#   - Block 1 must have timestamp >= parent.timestamp_ms (= genesis_time_ms).
+#   - The genesis coinbase carries genesis_headline_hex — a Bitcoin block hash
+#     mined before our deploy. Anyone can verify the BTC hash didn't exist
+#     before its own block timestamp, which proves our genesis cannot have
+#     been mined before then. Bitcoin's "Chancellor" trick.
+#
+# To verify the headline yourself:
+#   curl https://blockstream.info/api/block/<genesis_headline_hex> | jq
+#
+# Reproducing the genesis hash from this exact file gives the canonical
+# testnet identity. A different genesis.toml = a different chain.
 
-# Bitcoin-curve skeleton
-initial_bits            = 0x1f00ffff         # devnet — sub-second genesis. Retarget ramps real work.
+chain_id                = "pygrove-testnet-1"
+genesis_time_ms         = 1777420800000        # 2026-04-29 00:00:00 UTC
+genesis_headline_hex    = "000000000000000000021018660f24da5d8566c2d71eaf182287ca977ef0f67a"
+# ^ Bitcoin block 946923, mined 2026-04-28 05:53:12 UTC. Embedded into the
+#   genesis coinbase slot as proof-of-no-prior-knowledge.
+
+# Bitcoin-curve skeleton — testnet uses easier bits so a laptop can mine the
+# first few blocks. v0.2 testnet ramps closer to 10-min target.
+initial_bits            = 0x1f00ffff
 target_block_time_ms    = 600000
 retarget_interval       = 2016
 halving_interval_base   = 210000
@@ -24,8 +46,8 @@ sybil_require_paid_fee  = true
 sig_algo                = 1               # 1 = Falcon512 (FN-DSA, integer sampler)
 hash_algo               = 1               # 1 = Blake3Xof512
 
-# Cold governance public key (SLH-DSA-128s) — placeholder, replaced at init
+# Cold governance public key (SLH-DSA-128s) — placeholder, set at mainnet
 governance_pubkey_hex   = ""
 
-# Initial accounts (usually empty for a pure PoW chain)
+# Initial accounts — empty for fair launch, no premine.
 initial_accounts        = []
