@@ -4,6 +4,81 @@
 **Version 1.0 — April 2026**
 *xjqcj357 · github.com/xjqcj357/pygrove-chain*
 
+> **Status banner — v0.1 implementation.** This document specifies the v1.0
+> protocol. The reference codebase ships v0.1, which implements the accordion
+> math, the reflection layout, the fair-launch ceremony, the domain-tag
+> hashing helper, and the U256 retarget — and explicitly *does not* yet ship
+> the consensus seal (RandomX-lite, VDF), the post-quantum signature wiring
+> (Falcon-512, SLH-DSA), or the contract VM. Sections that describe deferred
+> components are marked **[v1.x — deferred]** below. See §0 for the full scope
+> table; nothing in §6 (seal), §8 (signatures), or §9 (VM) is live in v0.1.
+
+---
+
+## 0. v0.1 implementation scope
+
+The whitepaper specifies a target protocol; the v0.1 reference codebase is
+the scaffold. The table below is the authoritative map between the two — if
+a section is not listed as **live**, it is research-quality scaffolding only,
+and security claims in that section have not yet been earned.
+
+| Section | Component | v0.1 status | Notes |
+|---|---|---|---|
+| §2 | Bitcoin skeleton (10-min target, retarget, halving, 21M cap) | **live** | parameters in `genesis.toml`, retarget in [crates/consensus/src/retarget.rs](../crates/consensus/src/retarget.rs) |
+| §3 | Accordion (two-bellow + bias) Q64.64 math | **live** | [crates/consensus/src/accordion.rs](../crates/consensus/src/accordion.rs); `β_s = 0` until fee-suppression sim lands |
+| §3.5 | 21M supply cap | **live** | [crates/consensus/tests/supply_cap.rs](../crates/consensus/tests/supply_cap.rs) fuzzes 64 epochs |
+| §3.6 | Q64.64 fixed-point discipline | **live** | seeded-fuzz determinism test, error bound documented in source |
+| §4 | Reflection subtree shape | **live** | [crates/consensus/src/reflection.rs](../crates/consensus/src/reflection.rs); `compute_stability_bias` reads on-chain state |
+| §4.3 | `CHAIN_REFLECT` opcode | **[v1.2 — deferred]** | requires VM; v0.1 has no contracts |
+| §6.1 | RandomX-lite proposer seal | **[v1.1 — deferred]** | v0.1 PoW is domain-tagged Blake3-XOF-512; seal is GPU/ASIC-trivial today |
+| §6.2 | Class-group Wesolowski VDF finalizer | **[v1.1 — deferred]** | not implemented |
+| §7.1 | Subtree taxonomy | **partial** | enum + tags wired; GroveDB backend deferred to v1.0 |
+| §7.2 | Witness segregation | **partial** | header field present; pruning pipeline deferred to v0.2 |
+| §7.3 | Domain-tagged hashing helper | **live** | [crates/core/src/hash.rs](../crates/core/src/hash.rs); pow + memroot route through it |
+| §8.1 | Algorithm tag bytes | **live** | tag bytes plumbed through every primitive |
+| §8.2 | Falcon-512 hot signatures | **[v0.2 — deferred]** | `fn-dsa` dep declared; `sign`/`verify` return `NotWired` |
+| §8.2 | SLH-DSA-128s cold governance | **[v0.2 — deferred]** | same; `sizes()` accounting only |
+| §8.3 | `UpgradeCrypto` governance tx | **partial** | tx variant defined; activation logic deferred until algos wired |
+| §8.3 | Falcon-512 → Falcon-1024 rotation test | **[v0.2 — deferred]** | `tests/upgrade_roundtrip.rs` not yet written |
+| §9 | CPython contract VM | **[v1.2 — deferred]** | `crates/vm` is a 10-line placeholder |
+| §10 | Threat model claims | **scoped** | the claims hold *only* for the components listed live above |
+| §12 | RPC + node + bundled explorer | **live** | tip cache, 64KB body cap, fair-launch lockout enforced |
+
+If a reader's threat model relies on a deferred component, the v0.1 code does
+not protect against the corresponding adversary class. The whitepaper's §10
+threat model should be read as the v1.x target, not the v0.1 ground truth.
+
+### 0.1 What changed between v0.1.0 and v0.1.1
+
+The accompanying joint review (MIT / Georgia Tech / Texas A&M) called the
+v0.1.0 code a "well-engineered single-process PoW demo, not a chain." The
+v0.1.1 patch addresses the items that were within reach in a single commit:
+
+- **U256 retarget math**: replaces the 128-bit truncation in `bitcoin_retarget`
+  with full 256-bit `mul_div`, with explicit overflow saturation and clamp tests.
+- **Domain-tagged hashing consolidated**: `pow::hash_header` and
+  `MemState::root` route through `pygrove_core::hash::hash_with_domain`. No raw
+  `blake3::Hasher` calls remain in consensus or state.
+- **Stability bias is real**: `reflection::compute_stability_bias` derives
+  `s ∈ {-1,0,+1}` from on-chain `(fee_sum, active_addresses)` deltas via
+  cross-multiplied integer comparison. Default `β_s = 0` until the
+  fee-suppression scenario in `sim/adversarial.py` is written.
+- **Accordion bias is symmetric**: contraction now respects negative bias
+  (cools harder), and growth has a hard floor at `advance ≥ 1` so a negative
+  bias cannot turn an expansion into a slowdown. Closes the asymmetry the
+  joint review flagged.
+- **Test suite**: `cargo test` now runs supply-cap fuzz across 64 halving
+  epochs, ln_fixed seeded-fuzz determinism, U256 retarget clamp/overflow,
+  domain-tag separation, header-hash determinism, and reflection bias signs.
+- **RPC hardening**: tip + height cache → O(1) instead of O(chain) per call;
+  64 KB body cap on `POST /rpc`; HTML-escape on every RPC-derived value
+  spliced into the Janet landing page.
+
+What remains deferred (and is honest about it): RandomX-lite, the VDF
+finalizer, Falcon/SLH-DSA wiring, the Python VM, libp2p gossip, fork-choice
+beyond append-only, and an external RandomX-lite cryptanalysis. None of those
+fit in a single commit; each is its own milestone.
+
 ---
 
 ## Abstract

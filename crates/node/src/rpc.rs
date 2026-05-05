@@ -16,8 +16,14 @@ use crate::mining::{now_ms, template_from_parent};
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
 use pygrove_core::{Block, BlockBody, BlockHeader};
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
+
+/// Maximum JSON-RPC request body size. A submit_block payload is ~1 KB header JSON;
+/// 64 KB is generous and small enough that a flood cannot OOM the node. Anything
+/// larger is rejected before it touches `serde_json`.
+const MAX_RPC_BODY_BYTES: u64 = 64 * 1024;
 
 pub struct NodeState {
     pub store: ChainStore,
@@ -189,9 +195,9 @@ pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
     tracing::info!(bind, "rpc listening");
     for mut req in server.incoming_requests() {
         let resp = match (req.method(), req.url()) {
-            (Method::Post, "/rpc") => match std::io::read_to_string(req.as_reader()) {
-                Err(_) => json_err(400, "read body"),
-                Ok(body) => match serde_json::from_str::<RpcReq>(&body) {
+            (Method::Post, "/rpc") => match read_bounded_body(&mut req, MAX_RPC_BODY_BYTES) {
+                Err(e) => json_err(413, &e),
+                Ok(body) => match serde_json::from_slice::<RpcReq>(&body) {
                     Ok(rpc) => dispatch(rpc, &state),
                     Err(e) => json_err(400, &format!("bad request: {e}")),
                 },
@@ -203,6 +209,25 @@ pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
         let _ = req.respond(resp);
     }
     Ok(())
+}
+
+/// Read at most `max` bytes from the request body, rejecting anything larger.
+/// Prevents an attacker from POSTing a multi-GB payload to OOM the node.
+fn read_bounded_body(req: &mut tiny_http::Request, max: u64) -> Result<Vec<u8>, String> {
+    if let Some(len) = req.body_length() {
+        if len as u64 > max {
+            return Err(format!("body too large: {len} > {max}"));
+        }
+    }
+    let mut buf = Vec::new();
+    let mut limited = req.as_reader().take(max + 1);
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read body: {e}"))?;
+    if buf.len() as u64 > max {
+        return Err(format!("body too large: > {max}"));
+    }
+    Ok(buf)
 }
 
 fn json_ok<T: Serialize>(code: u16, body: &T) -> Response<std::io::Cursor<Vec<u8>>> {
