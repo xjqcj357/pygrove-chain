@@ -12,3 +12,6 @@ blake3 = { workspace = true }
 fixed = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }

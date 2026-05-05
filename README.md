@@ -13,6 +13,15 @@ A small proof-of-work blockchain that listens to itself.
 
 Status: **v0.1 — public testnet**. See [Whitepaper](docs/whitepaper.md) for the protocol; see below for testnet participation.
 
+> **What's actually live in v0.1.** The whitepaper specifies the v1.0 protocol;
+> v0.1 ships the accordion math, reflection layout, fair-launch ceremony, U256
+> retarget, and domain-tagged hashing. The PoW seal is Blake3-XOF-512 (RandomX-lite
+> + VDF deferred to v1.1); Falcon/SLH-DSA are tag-plumbed but not yet wired
+> (`sign`/`verify` return `NotWired`); the contract VM is a placeholder.
+> See [Whitepaper §0 v0.1 scope](docs/whitepaper.md#0-v01-implementation-scope)
+> for the authoritative live/deferred map. Don't deploy economic value on
+> testnet that assumes deferred components are present.
+
 ## Public testnet — `pygrove-testnet-1`
 
 Fair-launch testnet running on `66.42.93.85`. **No premine.** The node refuses

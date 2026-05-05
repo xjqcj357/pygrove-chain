@@ -48,14 +48,35 @@
         (if i (string/slice s (+ i 4)) "{}")))
     ([err]
       (eprint "rpc-call: " err)
+      # Synthesise a minimal result block. We do NOT splice `err` here —
+      # the error message is operator-controlled but treating it as data
+      # (rather than as JSON to embed) means a future logging change
+      # cannot widen the attack surface of the rendering path.
       (string
         "{\"result\":{\"chain_id\":\"node-unreachable\","
         "\"height\":0,"
-        "\"tip_hash\":\"" err "\"}}"))))
+        "\"tip_hash\":\"unreachable\"}}"))))
+
+(defn html-escape [s]
+  "Escape HTML metacharacters. Applied to every value extracted from the node's
+   RPC response before splicing into the page template. The node is on the same
+   VPS today, but treating its output as untrusted is the cheap correct stance:
+   it makes the page robust against a compromised or substituted node, and
+   against any attacker who finds a path to inject crafted bytes into chain_id
+   or tip_hash. Without this, a tip_hash containing `</style><script>...` would
+   execute in any browser that loaded the page."
+  (->> (string s)
+       (string/replace-all "&" "&amp;")
+       (string/replace-all "<" "&lt;")
+       (string/replace-all ">" "&gt;")
+       (string/replace-all "\"" "&quot;")
+       (string/replace-all "'" "&#39;")))
 
 (defn extract [body key default]
   "Cheap JSON extraction. Finds \"key\":value, handles strings and
-   numbers. We don't pull a JSON parser dep for one POST per request."
+   numbers. We don't pull a JSON parser dep for one POST per request.
+   The returned value is RAW — callers wrap with `html-escape` before
+   splicing into HTML."
   (let [needle (string "\"" key "\":")
         i (string/find needle body)]
     (if (nil? i)
@@ -188,11 +209,14 @@ Served by ~80 lines of <a href="https://janet-lang.org">Janet</a> — a Lisp dia
       "")))
 
 (defn render-page []
-  "Server-side render: fetch get_info from the node, splice into HTML."
+  "Server-side render: fetch get_info from the node, splice into HTML.
+   Every RPC-derived value is HTML-escaped before splicing — the countdown
+   block is internally trusted (it's built from numeric extracts that the
+   countdown formatter has already constrained to integer-shaped strings)."
   (let [body (rpc-call "get_info")
-        chain-id (extract body "chain_id" "—")
-        height (extract body "height" "—")
-        tip (extract body "tip_hash" "—")
+        chain-id (html-escape (extract body "chain_id" "—"))
+        height (html-escape (extract body "height" "—"))
+        tip (html-escape (extract body "tip_hash" "—"))
         countdown (countdown-block body)]
     # ->> threads the value through as the LAST arg of each form.
     # Janet's `string/replace` signature is (string/replace patt subst str),
