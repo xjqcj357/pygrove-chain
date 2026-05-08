@@ -13,7 +13,7 @@
 
 use crate::chainstore::ChainStore;
 use crate::mempool::Mempool;
-use crate::mining::{now_ms, template_from_parent};
+use crate::mining::now_ms;
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
 use pygrove_core::{AccountId, Block, BlockBody, BlockHeader, TxBody, Witness};
 use pygrove_state::{accounts as state_accounts, MemState};
