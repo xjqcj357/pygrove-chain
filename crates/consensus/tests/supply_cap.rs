@@ -88,7 +88,7 @@ fn cumulative_supply_bounded_by_geometric_series() {
         total_minted = total_minted.saturating_add(reward.saturating_mul(params.halving_interval_base as u128));
     }
     // ∑ R0 / 2^k for k=0..∞ = 2 R0; truncated at 64 it's ≤ 2 R0 - tiny ε.
-    let bound = (params.initial_reward_sat as u128) * (params.halving_interval_base as u128) * 2;
+    let bound = params.initial_reward_sat * (params.halving_interval_base as u128) * 2;
     assert!(
         total_minted <= bound,
         "cumulative supply {} exceeded geometric bound {}",
