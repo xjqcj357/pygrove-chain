@@ -2,6 +2,7 @@
 
 mod chainstore;
 mod genesis;
+mod mempool;
 mod mining;
 mod rpc;
 
@@ -200,7 +201,10 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
             if meets_target(&h, &target) {
                 let block = pygrove_core::Block {
                     header: hdr.clone(),
-                    body: pygrove_core::BlockBody { txs: vec![] },
+                    body: pygrove_core::BlockBody {
+                        txs: vec![],
+                        witnesses: vec![],
+                    },
                 };
                 // Go through the same gate as JSON-RPC submit_block — if a
                 // remote miner won the race a moment ago, we'll see "stale

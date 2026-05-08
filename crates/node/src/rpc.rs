@@ -328,7 +328,10 @@ fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
     let hdr: BlockHeader = req.header.try_into()?;
     let block = Block {
         header: hdr.clone(),
-        body: BlockBody { txs: vec![] },
+        body: BlockBody {
+            txs: vec![],
+            witnesses: vec![],
+        },
     };
     try_apply_block(st, &block)?;
     Ok(SubmitResp {

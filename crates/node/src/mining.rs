@@ -54,6 +54,9 @@ pub fn mine_inline(mut header: BlockHeader) -> Block {
     }
     Block {
         header,
-        body: BlockBody { txs: vec![] },
+        body: BlockBody {
+            txs: vec![],
+            witnesses: vec![],
+        },
     }
 }

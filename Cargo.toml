@@ -42,7 +42,7 @@ rand_core = "0.6"
 # Address encoding (BIP-0173 bech32m, with `pyg` HRP for PyGrove)
 bech32 = "0.11"
 # Bringup signature algorithm — replaced by Falcon-512 in Phase B via UpgradeCrypto
-ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "fast"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "fast", "rand_core"] }
 # Storage
 rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
 # PQ signatures
