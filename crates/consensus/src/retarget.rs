@@ -133,7 +133,7 @@ mod tests {
         // Seeded LCG: same seed → byte-identical digest, on every platform.
         // The point isn't randomness; it's determinism. Two passes must match.
         fn run() -> [u8; 32] {
-            let mut seed: u64 = 0xc0ffee_dead_beefu64;
+            let mut seed: u64 = 0x00c0_ffee_dead_beef_u64;
             let mut h = blake3::Hasher::new();
             for _ in 0..1024 {
                 seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
