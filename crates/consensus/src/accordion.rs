@@ -3,7 +3,7 @@
 //! - `r_h`: hashrate ratio, period-over-period
 //! - `r_a`: sybil-guarded active-address ratio
 //! - `bias`: sign of the stability signal (Δ fee-per-active over the long window),
-//!           wired from `reflection::compute_stability_bias`.
+//!   wired from `reflection::compute_stability_bias`.
 //!
 //! `alpha_h` dampens the Bitcoin retarget when either bellow is pumping.
 //! `per_block_advance` accelerates / decelerates halving progress.
