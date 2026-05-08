@@ -218,9 +218,10 @@ mod tests {
     fn growth_floor_is_one_under_negative_bias() {
         // beta_s = 0 by default, but verify the floor under a hypothetical positive beta_s:
         // a negative bias must not pull a growth regime below 1.0 advance.
+        // r=1.10 (ln≈0.0953) clears the 0.05 equilibrium band cleanly.
         let mut p = AccordionParams::defaults();
         p.beta_s = I64F64::from_num(0.5);
-        let out = evaluate(p, I64F64::from_num(1.05), I64F64::from_num(1.05), -1);
+        let out = evaluate(p, I64F64::from_num(1.10), I64F64::from_num(1.10), -1);
         assert_eq!(out.regime, Regime::Growth);
         assert!(out.per_block_advance >= I64F64::from_num(1), "floor breached: {}", out.per_block_advance);
     }
