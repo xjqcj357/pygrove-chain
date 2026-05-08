@@ -7,9 +7,8 @@
 //!
 //! On the wire the account id is the raw 20 bytes; in user-facing surfaces
 //! (wallets, RPC strings, the explorer) the address is bech32m-encoded with
-//! the `pyg` human-readable prefix:
-//!
-//!     pyg1qz4f...    (testnet, mainnet, anywhere — there is no per-network HRP)
+//! the `pyg` human-readable prefix — `pyg1qz4f...` everywhere (testnet,
+//! mainnet, anywhere). There is no per-network HRP.
 //!
 //! Bech32m has built-in error detection: a single typo in the address fails
 //! the checksum and the wallet refuses to send.
