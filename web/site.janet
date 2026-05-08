@@ -153,6 +153,8 @@ footer a:hover{color:var(--accent)}
 <div class="live">
   <div class="cell"><div class="lbl">Chain ID</div><div class="val">{CHAIN_ID}</div></div>
   <div class="cell"><div class="lbl">Block height</div><div class="val">{HEIGHT}</div></div>
+  <div class="cell"><div class="lbl">Mempool</div><div class="val">{MEMPOOL}</div></div>
+  <div class="cell"><div class="lbl">Block reward (sat)</div><div class="val">{REWARD}</div></div>
   <div class="cell" style="grid-column:span 2"><div class="lbl">Tip hash</div><div class="val tip">{TIP}</div></div>
 </div>
 </section>
@@ -217,6 +219,8 @@ Served by ~80 lines of <a href="https://janet-lang.org">Janet</a> — a Lisp dia
         chain-id (html-escape (extract body "chain_id" "—"))
         height (html-escape (extract body "height" "—"))
         tip (html-escape (extract body "tip_hash" "—"))
+        mempool (html-escape (extract body "mempool_size" "0"))
+        reward (html-escape (extract body "block_reward_sat" "—"))
         countdown (countdown-block body)]
     # ->> threads the value through as the LAST arg of each form.
     # Janet's `string/replace` signature is (string/replace patt subst str),
@@ -225,6 +229,8 @@ Served by ~80 lines of <a href="https://janet-lang.org">Janet</a> — a Lisp dia
          (string/replace "{CHAIN_ID}" chain-id)
          (string/replace "{HEIGHT}" height)
          (string/replace "{TIP}" tip)
+         (string/replace "{MEMPOOL}" mempool)
+         (string/replace "{REWARD}" reward)
          (string/replace "{COUNTDOWN_BLOCK}" countdown))))
 
 (defn http-respond [stream html]

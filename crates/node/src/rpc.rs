@@ -12,12 +12,14 @@
 //! One thread per connection (tiny_http default). Sync. State is a shared `Arc<NodeState>`.
 
 use crate::chainstore::ChainStore;
-use crate::mining::{now_ms, template_from_parent};
+use crate::mempool::Mempool;
+use crate::mining::now_ms;
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
-use pygrove_core::{Block, BlockBody, BlockHeader};
+use pygrove_core::{AccountId, Block, BlockBody, BlockHeader, TxBody, Witness};
+use pygrove_state::{accounts as state_accounts, MemState};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Response, Server};
 
 /// Maximum JSON-RPC request body size. A submit_block payload is ~1 KB header JSON;
@@ -35,6 +37,13 @@ pub struct NodeState {
     /// Wall-clock milliseconds at which the chain accepts block 1+ submissions.
     /// Before this, `submit_block` returns "pre-genesis: launch in Ns".
     pub genesis_time_ms: u64,
+    /// In-memory account/witness state, rebuilt at startup by replaying every
+    /// block from the chain log. v0.2 swaps to GroveDB-backed persistence.
+    pub state: Mutex<MemState>,
+    pub mempool: Arc<Mempool>,
+    /// Per-block coinbase reward in satoshi. Constant in Phase A; the accordion
+    /// + halving schedule kick in once we have retargets working.
+    pub block_reward_sat: u128,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -70,6 +79,8 @@ struct InfoResp {
     genesis_time_ms: u64,
     /// `now_ms - genesis_time_ms`. Negative means pre-genesis (chain frozen).
     genesis_offset_ms: i64,
+    mempool_size: usize,
+    block_reward_sat: u128,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -144,11 +155,22 @@ impl TryFrom<HeaderJson> for BlockHeader {
 struct TemplateResp {
     header: HeaderJson,
     target: String,
+    /// Hex CBOR of each TxBody the miner should include in `body.txs`,
+    /// parallel to `witnesses_cbor_hex`. Pre-baked into `header.tx_root`.
+    txs_cbor_hex: Vec<String>,
+    witnesses_cbor_hex: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SubmitReq {
     header: HeaderJson,
+    /// Hex-encoded canonical CBOR of `pygrove_core::TxBody`, parallel to
+    /// `witnesses_cbor_hex`. Empty for blocks that include no user transactions.
+    #[serde(default)]
+    txs_cbor_hex: Vec<String>,
+    /// Hex-encoded canonical CBOR of `pygrove_core::Witness`, same length as `txs_cbor_hex`.
+    #[serde(default)]
+    witnesses_cbor_hex: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -186,6 +208,59 @@ struct BlockDetail {
     hash: String,
     tx_count: usize,
     header: HeaderJson,
+    txs: Vec<TxSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct TxSummary {
+    hash: String,
+    from: String,
+    to: String,
+    amount_sat: u128,
+    fee_sat: u64,
+    nonce: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubmitTxReq {
+    /// Hex-encoded canonical CBOR of `pygrove_core::TxBody`.
+    tx_cbor_hex: String,
+    /// Hex-encoded canonical CBOR of `pygrove_core::Witness`.
+    witness_cbor_hex: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SubmitTxResp {
+    ok: bool,
+    tx_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddrReq {
+    /// bech32m `pyg1...` address.
+    address: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BalanceResp {
+    address: String,
+    balance_sat: u128,
+    nonce: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountResp {
+    address: String,
+    balance_sat: u128,
+    nonce: u64,
+    has_pubkey: bool,
+    sig_algo: u8,
+}
+
+#[derive(Debug, Serialize)]
+struct MempoolResp {
+    size: usize,
+    hashes: Vec<String>,
 }
 
 const EXPLORER_HTML: &str = include_str!("explorer.html");
@@ -281,8 +356,86 @@ fn dispatch(rpc: RpcReq, st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
             },
             Err(e) => json_err(400, &format!("bad params: {e}")),
         },
+        "submit_tx" => match serde_json::from_value::<SubmitTxReq>(rpc.params) {
+            Ok(req) => match submit_tx(st, req) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(400, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
+        "get_balance" => match serde_json::from_value::<AddrReq>(rpc.params) {
+            Ok(req) => match get_balance(st, &req.address) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(400, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
+        "get_account" => match serde_json::from_value::<AddrReq>(rpc.params) {
+            Ok(req) => match get_account(st, &req.address) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(400, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
+        "get_mempool" => json_ok(
+            200,
+            &RpcOk {
+                result: MempoolResp {
+                    size: st.mempool.len(),
+                    hashes: st.mempool.pending_hashes(),
+                },
+            },
+        ),
         m => json_err(400, &format!("unknown method: {m}")),
     }
+}
+
+fn submit_tx(st: &NodeState, req: SubmitTxReq) -> anyhow::Result<SubmitTxResp> {
+    let tx_bytes = hex::decode(&req.tx_cbor_hex)
+        .map_err(|e| anyhow::anyhow!("tx_cbor_hex decode: {e}"))?;
+    let witness_bytes = hex::decode(&req.witness_cbor_hex)
+        .map_err(|e| anyhow::anyhow!("witness_cbor_hex decode: {e}"))?;
+    let body: TxBody = ciborium::de::from_reader(&tx_bytes[..])
+        .map_err(|e| anyhow::anyhow!("tx CBOR parse: {e}"))?;
+    let witness: Witness = ciborium::de::from_reader(&witness_bytes[..])
+        .map_err(|e| anyhow::anyhow!("witness CBOR parse: {e}"))?;
+    let hash = st
+        .mempool
+        .submit(body, witness)
+        .map_err(|e| anyhow::anyhow!("mempool reject: {e}"))?;
+    tracing::info!(tx_hash = %hex::encode(hash), "tx accepted into mempool");
+    Ok(SubmitTxResp {
+        ok: true,
+        tx_hash: hex::encode(hash),
+    })
+}
+
+fn parse_address(s: &str) -> anyhow::Result<AccountId> {
+    AccountId::from_bech32(s).map_err(|e| anyhow::anyhow!("address: {e}"))
+}
+
+fn get_balance(st: &NodeState, address: &str) -> anyhow::Result<BalanceResp> {
+    let id = parse_address(address)?;
+    let state = st.state.lock().unwrap();
+    let acct = state_accounts::load_or_default(&*state, &id);
+    Ok(BalanceResp {
+        address: address.to_string(),
+        balance_sat: acct.balance,
+        nonce: acct.nonce,
+    })
+}
+
+fn get_account(st: &NodeState, address: &str) -> anyhow::Result<AccountResp> {
+    let id = parse_address(address)?;
+    let state = st.state.lock().unwrap();
+    let acct = state_accounts::load_or_default(&*state, &id);
+    Ok(AccountResp {
+        address: address.to_string(),
+        balance_sat: acct.balance,
+        nonce: acct.nonce,
+        has_pubkey: !acct.pubkey.is_empty(),
+        sig_algo: acct.sig_algo,
+    })
 }
 
 fn list_blocks(st: &NodeState, limit: usize) -> anyhow::Result<Vec<BlockSummary>> {
@@ -300,10 +453,34 @@ fn list_blocks(st: &NodeState, limit: usize) -> anyhow::Result<Vec<BlockSummary>
 }
 
 fn get_block(st: &NodeState, height: u64) -> anyhow::Result<Option<BlockDetail>> {
-    Ok(st.store.get_by_height(height)?.map(|b| BlockDetail {
-        hash: hex::encode(hash_header(&b.header)),
-        tx_count: b.body.txs.len(),
-        header: HeaderJson::from(&b.header),
+    Ok(st.store.get_by_height(height)?.map(|b| {
+        let txs: Vec<TxSummary> = b
+            .body
+            .txs
+            .iter()
+            .map(|tx| {
+                let (to_addr, amount) = match &tx.call {
+                    pygrove_core::TxCall::Transfer { to, amount } => {
+                        (to.to_string(), *amount)
+                    }
+                    _ => ("(non-transfer)".into(), 0u128),
+                };
+                TxSummary {
+                    hash: hex::encode(tx.body_hash()),
+                    from: tx.from_account.to_string(),
+                    to: to_addr,
+                    amount_sat: amount,
+                    fee_sat: tx.fee_sat,
+                    nonce: tx.nonce,
+                }
+            })
+            .collect();
+        BlockDetail {
+            hash: hex::encode(hash_header(&b.header)),
+            tx_count: b.body.txs.len(),
+            header: HeaderJson::from(&b.header),
+            txs,
+        }
     }))
 }
 
@@ -325,6 +502,8 @@ fn info(st: &NodeState) -> anyhow::Result<InfoResp> {
         hash_algo: st.hash_algo,
         genesis_time_ms: st.genesis_time_ms,
         genesis_offset_ms: offset,
+        mempool_size: st.mempool.len(),
+        block_reward_sat: st.block_reward_sat,
     })
 }
 
@@ -334,7 +513,14 @@ fn template(st: &NodeState) -> anyhow::Result<TemplateResp> {
         Some(b) => (hash_header(&b.header), b.header.height),
         None => ([0u8; 32], 0),
     };
-    let hdr = template_from_parent(
+    let pending = st.mempool.pull_for_block(256);
+    let txs: Vec<TxBody> = pending.iter().map(|p| p.body.clone()).collect();
+    let witnesses: Vec<Witness> = pending.iter().map(|p| p.witness.clone()).collect();
+    let body = BlockBody {
+        txs: txs.clone(),
+        witnesses: witnesses.clone(),
+    };
+    let hdr = crate::mining::template_from_parent_with_body(
         parent_hash,
         parent_height,
         st.bits,
@@ -342,18 +528,56 @@ fn template(st: &NodeState) -> anyhow::Result<TemplateResp> {
         st.sig_algo,
         st.hash_algo,
         now_ms(),
+        &body,
     );
+    let mut tx_hex = Vec::with_capacity(txs.len());
+    for tx in &txs {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(tx, &mut buf)
+            .map_err(|e| anyhow::anyhow!("tx encode: {e}"))?;
+        tx_hex.push(hex::encode(buf));
+    }
+    let mut wit_hex = Vec::with_capacity(witnesses.len());
+    for w in &witnesses {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(w, &mut buf)
+            .map_err(|e| anyhow::anyhow!("witness encode: {e}"))?;
+        wit_hex.push(hex::encode(buf));
+    }
     Ok(TemplateResp {
         header: HeaderJson::from(&hdr),
         target: hex::encode(target_from_bits(st.bits)),
+        txs_cbor_hex: tx_hex,
+        witnesses_cbor_hex: wit_hex,
     })
 }
 
 fn submit(st: &NodeState, req: SubmitReq) -> anyhow::Result<SubmitResp> {
     let hdr: BlockHeader = req.header.try_into()?;
+    if req.txs_cbor_hex.len() != req.witnesses_cbor_hex.len() {
+        anyhow::bail!(
+            "txs/witnesses length mismatch: {} txs, {} witnesses",
+            req.txs_cbor_hex.len(),
+            req.witnesses_cbor_hex.len()
+        );
+    }
+    let mut txs = Vec::with_capacity(req.txs_cbor_hex.len());
+    for (i, s) in req.txs_cbor_hex.iter().enumerate() {
+        let bytes = hex::decode(s).map_err(|e| anyhow::anyhow!("tx[{i}] hex: {e}"))?;
+        let tx: TxBody = ciborium::de::from_reader(&bytes[..])
+            .map_err(|e| anyhow::anyhow!("tx[{i}] cbor: {e}"))?;
+        txs.push(tx);
+    }
+    let mut witnesses = Vec::with_capacity(req.witnesses_cbor_hex.len());
+    for (i, s) in req.witnesses_cbor_hex.iter().enumerate() {
+        let bytes = hex::decode(s).map_err(|e| anyhow::anyhow!("witness[{i}] hex: {e}"))?;
+        let w: Witness = ciborium::de::from_reader(&bytes[..])
+            .map_err(|e| anyhow::anyhow!("witness[{i}] cbor: {e}"))?;
+        witnesses.push(w);
+    }
     let block = Block {
         header: hdr.clone(),
-        body: BlockBody { txs: vec![] },
+        body: BlockBody { txs, witnesses },
     };
     try_apply_block(st, &block)?;
     Ok(SubmitResp {
@@ -425,6 +649,46 @@ pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
     if !meets_target(&h, &target) {
         anyhow::bail!("hash does not meet target");
     }
+    // 5. Body roots: header.tx_root and header.witness_root must commit to
+    //    the body the miner is publishing.
+    let computed_tx_root = block.body.tx_root();
+    if hdr.tx_root != computed_tx_root {
+        anyhow::bail!(
+            "tx_root mismatch: header={} body={}",
+            hex::encode(hdr.tx_root),
+            hex::encode(computed_tx_root)
+        );
+    }
+    let computed_witness_root = block.body.witness_root();
+    if hdr.witness_root != computed_witness_root {
+        anyhow::bail!(
+            "witness_root mismatch: header={} body={}",
+            hex::encode(hdr.witness_root),
+            hex::encode(computed_witness_root)
+        );
+    }
+    // 6. Apply state transitions. Genesis (height 0) doesn't pay block reward —
+    //    it would mint to the headline-derived address, which nobody owns.
+    let reward = if hdr.height == 0 {
+        0
+    } else {
+        st.block_reward_sat
+    };
+    let mut state = st.state.lock().unwrap();
+    let out = pygrove_state::apply_block(&mut *state, block, reward)
+        .map_err(|e| anyhow::anyhow!("apply_block: {e}"))?;
+    drop(state);
+    // 7. Drop confirmed txs from the mempool. Computed *after* apply because
+    //    apply uses tx_body_hash, and only after success do we want to evict.
+    let confirmed: Vec<[u8; 32]> = block.body.txs.iter().map(|t| t.body_hash()).collect();
+    st.mempool.confirm(&confirmed);
+    // 8. Persist to chain log.
     st.store.append(block)?;
+    tracing::debug!(
+        height = hdr.height,
+        txs = out.txs_applied,
+        fees = %out.fees_collected_sat,
+        "block applied"
+    );
     Ok(())
 }

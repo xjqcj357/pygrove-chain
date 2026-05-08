@@ -7,7 +7,14 @@ export component AppWindow inherits Window {
     background: #0b0d10;
 
     // Wallet
+    in-out property <string> wallet_address: "—";
+    in-out property <string> wallet_pubkey: "—";
     in-out property <string> balance_sat: "0";
+    in-out property <string> wallet_nonce: "0";
+    in-out property <string> send_to: "";
+    in-out property <string> send_amount: "";
+    in-out property <string> send_fee: "100";
+    in-out property <string> send_status: "";
     in-out property <string> block_height: "0";
     in-out property <string> regime: "equilibrium";
     in-out property <string> halving_progress: "0 / 210000";
@@ -30,6 +37,7 @@ export component AppWindow inherits Window {
 
     callback connect_clicked();
     callback mine_toggle();
+    callback send_clicked();
 
     VerticalBox {
         padding: 16px;
@@ -48,23 +56,57 @@ export component AppWindow inherits Window {
                     padding: 12px;
                     spacing: 8px;
                     GroupBox {
+                        title: "Your address";
+                        VerticalBox {
+                            Text { text: root.wallet_address; color: #7cc4ff; font-size: 13px; }
+                            Text {
+                                text: "Share this address to receive PYG. Mining rewards land here too.";
+                                color: #9aa6b2;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    GroupBox {
                         title: "Balance";
                         VerticalBox {
-                            Text { text: "sat: " + root.balance_sat; color: #e8f0ff; }
+                            Text { text: root.balance_sat + " sat"; color: #e8f0ff; font-size: 16px; }
+                            Text { text: "nonce: " + root.wallet_nonce; color: #9aa6b2; font-size: 11px; }
                         }
                     }
                     GroupBox {
                         title: "Send";
                         VerticalBox {
+                            spacing: 6px;
                             HorizontalBox {
-                                Text { text: "to:"; color: #e8f0ff; }
-                                LineEdit { placeholder-text: "account id (hex)"; }
+                                Text { text: "to:"; color: #e8f0ff; width: 70px; }
+                                LineEdit {
+                                    text: root.send_to;
+                                    placeholder-text: "pyg1...";
+                                    edited => { root.send_to = self.text; }
+                                }
                             }
                             HorizontalBox {
-                                Text { text: "amount:"; color: #e8f0ff; }
-                                LineEdit { placeholder-text: "sat"; }
+                                Text { text: "amount:"; color: #e8f0ff; width: 70px; }
+                                LineEdit {
+                                    text: root.send_amount;
+                                    placeholder-text: "sat";
+                                    edited => { root.send_amount = self.text; }
+                                }
                             }
-                            Button { text: "Sign + submit"; }
+                            HorizontalBox {
+                                Text { text: "fee:"; color: #e8f0ff; width: 70px; }
+                                LineEdit {
+                                    text: root.send_fee;
+                                    placeholder-text: "sat";
+                                    edited => { root.send_fee = self.text; }
+                                }
+                            }
+                            Button {
+                                text: "Sign + submit";
+                                clicked => { root.send_clicked(); }
+                            }
+                            Text { text: root.send_status; color: #c0ccd8; font-size: 11px; wrap: word-wrap; }
                         }
                     }
                 }

@@ -16,11 +16,12 @@
 # Reproducing the genesis hash from this exact file gives the canonical
 # testnet identity. A different genesis.toml = a different chain.
 
-chain_id                = "pygrove-testnet-1"
-genesis_time_ms         = 1777420800000        # 2026-04-29 00:00:00 UTC
-genesis_headline_hex    = "000000000000000000021018660f24da5d8566c2d71eaf182287ca977ef0f67a"
-# ^ Bitcoin block 946923, mined 2026-04-28 05:53:12 UTC. Embedded into the
-#   genesis coinbase slot as proof-of-no-prior-knowledge.
+chain_id                = "pygrove-testnet-2"
+genesis_time_ms         = 1778371200000        # 2026-05-10 00:00:00 UTC
+genesis_headline_hex    = "00000000000000000001b62fbb2361bb622e8b767db52961d700cb0ad352304e"
+# ^ Bitcoin block 948515, mined 2026-05-08 22:23:16 UTC. Embedded into the
+#   genesis coinbase slot as proof-of-no-prior-knowledge. testnet-2 incorporates
+#   real send/receive (Phase A: Ed25519); testnet-1 retired pre-launch.
 
 # Bitcoin-curve skeleton — testnet uses easier bits so a laptop can mine the
 # first few blocks. v0.2 testnet ramps closer to 10-min target.

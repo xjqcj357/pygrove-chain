@@ -9,6 +9,11 @@ description = "PyGrove Chain: authenticated state store with domain-tagged subtr
 [dependencies]
 pygrove-core = { path = "../core" }
 pygrove-consensus = { path = "../consensus" }
+pygrove-crypto = { path = "../crypto" }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 ciborium = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true, features = ["getrandom"] }

@@ -15,14 +15,18 @@ Status: **v0.1 — public testnet**. See [Whitepaper](docs/whitepaper.md) for th
 
 > **What's actually live in v0.1.** The whitepaper specifies the v1.0 protocol;
 > v0.1 ships the accordion math, reflection layout, fair-launch ceremony, U256
-> retarget, and domain-tagged hashing. The PoW seal is Blake3-XOF-512 (RandomX-lite
-> + VDF deferred to v1.1); Falcon/SLH-DSA are tag-plumbed but not yet wired
-> (`sign`/`verify` return `NotWired`); the contract VM is a placeholder.
-> See [Whitepaper §0 v0.1 scope](docs/whitepaper.md#0-v01-implementation-scope)
+> retarget, domain-tagged hashing, and (Phase A) signed transactions with full
+> account state via `apply_block`. The PoW seal is Blake3-XOF-512 (RandomX-lite
+> + VDF deferred to v1.1). Phase A signs with **Ed25519** (`sig_algo = 3`);
+> Falcon-512 (`1`) and SLH-DSA-128s (`2`) are tag-plumbed but still
+> `NotWired` — they activate via `UpgradeCrypto` in Phase B, which itself is
+> the first real exercise of the crypto-agility layer the whitepaper promises.
+> The contract VM is a placeholder. See
+> [Whitepaper §0 v0.1 scope](docs/whitepaper.md#0-v01-implementation-scope)
 > for the authoritative live/deferred map. Don't deploy economic value on
 > testnet that assumes deferred components are present.
 
-## Public testnet — `pygrove-testnet-1`
+## Public testnet — `pygrove-testnet-2`
 
 Fair-launch testnet running on `66.42.93.85`. **No premine.** The node refuses
 to accept block submissions before genesis time; the genesis coinbase carries
@@ -30,13 +34,19 @@ a Bitcoin block hash mined before our deploy as proof-of-no-prior-knowledge.
 
 | | |
 |---|---|
-| **Chain ID** | `pygrove-testnet-1` |
-| **Genesis time** | `2026-04-29 00:00:00 UTC` (`genesis_time_ms = 1777420800000`) |
-| **Genesis headline** | BTC block `946923` — hash `000000000000000000021018660f24da5d8566c2d71eaf182287ca977ef0f67a` (mined `2026-04-28 05:53:12 UTC`) |
+| **Chain ID** | `pygrove-testnet-2` |
+| **Genesis time** | `2026-05-10 00:00:00 UTC` (`genesis_time_ms = 1778371200000`) |
+| **Genesis headline** | BTC block `948515` — hash `00000000000000000001b62fbb2361bb622e8b767db52961d700cb0ad352304e` (mined `2026-05-08 22:23:16 UTC`) |
 | **Initial bits** | `0x1f00ffff` (laptop-mineable; mainnet uses `0x1d00ffff`) |
+| **Sig algo** | `3` (Ed25519) — Phase A bringup; rotates to Falcon-512 (`1`) via `UpgradeCrypto` in Phase B |
 | **RPC endpoint** | `http://66.42.93.85:8545/rpc` |
 | **Block explorer** | http://66.42.93.85:8545/ |
 | **Landing page** | http://66.42.93.85:8000/ |
+
+testnet-1 was retired pre-launch when we landed real send/receive (the protocol
+shape changed substantively). testnet-2 is the same fair-launch ceremony with
+the new mechanics in place: AccountId + bech32 addresses, signed transactions,
+mempool, apply_block, wallet balance polling.
 
 ### Verifying the genesis headline
 

@@ -2,6 +2,7 @@
 
 mod chainstore;
 mod genesis;
+mod mempool;
 mod mining;
 mod rpc;
 
@@ -9,10 +10,13 @@ use anyhow::Context;
 use chainstore::ChainStore;
 use clap::{Parser, Subcommand};
 use genesis::Genesis;
-use mining::{mine_inline, now_ms, template_from_parent};
+use mempool::Mempool;
+use mining::{mine_inline, now_ms, template_from_parent_with_body};
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
+use pygrove_core::{AccountId, BlockBody, TxBody, Witness};
+use pygrove_state::MemState;
 use rpc::NodeState;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -100,7 +104,7 @@ fn cmd_init(genesis_path: &str, data_dir: &str, _key: &str) -> anyhow::Result<()
     // Genesis coinbase = headline bytes (proof of no prior knowledge).
     // Post-genesis blocks use coinbase = miner account ID.
     let coinbase = g.headline_bytes();
-    let hdr = template_from_parent(
+    let hdr = mining::template_from_parent(
         [0u8; 32],
         0_u64.wrapping_sub(1),
         g.initial_bits,
@@ -132,14 +136,57 @@ fn cmd_run(
     if store.tip()?.is_none() {
         anyhow::bail!("data dir {data_dir} empty — run `pygrove-node init` first");
     }
+
+    // Reconstruct in-memory state by replaying every block from the chain log
+    // through apply_block. v0.2 swaps to GroveDB persistence so this O(N)
+    // startup cost goes away.
+    let blocks = store.load_all()?;
+    let block_reward_sat: u128 = g.initial_reward_sat as u128;
+    let mut mem = MemState::new();
+    for b in &blocks {
+        let reward = if b.header.height == 0 { 0 } else { block_reward_sat };
+        pygrove_state::apply_block(&mut mem, b, reward)
+            .map_err(|e| anyhow::anyhow!("replay height {}: {e}", b.header.height))?;
+    }
+    tracing::info!(
+        replayed = blocks.len(),
+        reward_sat = block_reward_sat,
+        "state replayed; entering live mode"
+    );
+
+    // Optional treasury address — env override sets where the throttled
+    // self-miner mints coinbase. Default is the headline-derived address
+    // (effectively burned, since nobody owns the secret key for it).
+    let coinbase = if let Ok(addr) = std::env::var("PYGROVE_TREASURY_ADDRESS") {
+        match AccountId::from_bech32(&addr) {
+            Ok(id) => {
+                tracing::info!(address = %id, "coinbase = treasury (env override)");
+                id.pad_to_32()
+            }
+            Err(e) => {
+                tracing::warn!(%e, "PYGROVE_TREASURY_ADDRESS invalid; falling back to headline");
+                let mut c = [0u8; 32];
+                c[..20].copy_from_slice(&g.headline_bytes()[..20]);
+                c
+            }
+        }
+    } else {
+        let mut c = [0u8; 32];
+        c[..20].copy_from_slice(&g.headline_bytes()[..20]);
+        c
+    };
+
     let state = Arc::new(NodeState {
         store,
         chain_id: g.chain_id.clone(),
         bits: g.initial_bits,
-        coinbase: [0u8; 32],
+        coinbase,
         sig_algo: g.sig_algo,
         hash_algo: g.hash_algo,
         genesis_time_ms: g.genesis_time_ms,
+        state: Mutex::new(mem),
+        mempool: Arc::new(Mempool::new(10_000)),
+        block_reward_sat,
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
@@ -185,7 +232,15 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
             }
         };
         let parent_hash = hash_header(&tip.header);
-        let mut hdr = template_from_parent(
+
+        // Snapshot mempool for this mining attempt. If the mempool changes
+        // mid-mine, we'll just keep mining the snapshot and the freshly-arrived
+        // txs go into the *next* block. That's fine and matches Bitcoin.
+        let pending = st.mempool.pull_for_block(256);
+        let txs: Vec<TxBody> = pending.iter().map(|p| p.body.clone()).collect();
+        let witnesses: Vec<Witness> = pending.iter().map(|p| p.witness.clone()).collect();
+        let body = BlockBody { txs, witnesses };
+        let mut hdr = template_from_parent_with_body(
             parent_hash,
             tip.header.height,
             st.bits,
@@ -193,6 +248,7 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
             st.sig_algo,
             st.hash_algo,
             now_ms(),
+            &body,
         );
         let start = std::time::Instant::now();
         loop {
@@ -200,7 +256,7 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
             if meets_target(&h, &target) {
                 let block = pygrove_core::Block {
                     header: hdr.clone(),
-                    body: pygrove_core::BlockBody { txs: vec![] },
+                    body: body.clone(),
                 };
                 // Go through the same gate as JSON-RPC submit_block — if a
                 // remote miner won the race a moment ago, we'll see "stale
