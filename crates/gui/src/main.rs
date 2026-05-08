@@ -72,6 +72,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_mine_toggle({
         let weak = weak.clone();
         let slot = miner_slot.clone();
+        let wallet = wallet.clone();
         move || {
             if let Some(ui) = weak.upgrade() {
                 let mut s = slot.borrow_mut();
@@ -88,10 +89,17 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     let url = ui.get_rpc_url().to_string();
                     let threads = ui.get_intensity().round().max(1.0) as usize;
-                    let handle = miner::start(url, threads);
+                    // Mining rewards go to whatever AccountId the block's
+                    // coinbase[..20] decodes to. Without a wallet loaded we
+                    // fall back to all-zeros (effectively burned).
+                    let coinbase = match wallet.as_ref() {
+                        Some(w) => w.address.pad_to_32(),
+                        None => [0u8; 32],
+                    };
+                    let handle = miner::start(url, threads, coinbase);
                     *s = Some(handle);
                     ui.set_mining_on(true);
-                    ui.set_mine_status(format!("mining ({threads} threads)").into());
+                    ui.set_mine_status(format!("mining ({threads} threads) → wallet").into());
                 }
             }
         }

@@ -161,7 +161,7 @@ pub fn num_cpus() -> usize {
         .unwrap_or(1)
 }
 
-pub fn start(url: String, threads: usize) -> MinerHandle {
+pub fn start(url: String, threads: usize, coinbase: [u8; 32]) -> MinerHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let hashes = Arc::new(AtomicU64::new(0));
     let accepted = Arc::new(AtomicU64::new(0));
@@ -181,16 +181,29 @@ pub fn start(url: String, threads: usize) -> MinerHandle {
         let rejected = rejected.clone();
         thread::Builder::new()
             .name(format!("pg-miner-{t}"))
-            .spawn(move || worker(t as u64, n as u64, url, stop, hashes, accepted, rejected))
+            .spawn(move || {
+                worker(
+                    t as u64,
+                    n as u64,
+                    url,
+                    coinbase,
+                    stop,
+                    hashes,
+                    accepted,
+                    rejected,
+                )
+            })
             .expect("spawn miner thread");
     }
     handle
 }
 
+#[allow(clippy::too_many_arguments)]
 fn worker(
     thread_id: u64,
     stride: u64,
     url: String,
+    coinbase: [u8; 32],
     stop: Arc<AtomicBool>,
     hashes: Arc<AtomicU64>,
     accepted: Arc<AtomicU64>,
@@ -209,6 +222,12 @@ fn worker(
                 continue;
             }
         };
+        // Override coinbase with the local wallet's address (padded to 32 bytes).
+        // The node's get_template returns its own coinbase setting, but the
+        // block reward goes to AccountId::from_coinbase(header.coinbase) — so
+        // by setting our own here, our blocks mint to our wallet, not the
+        // node's treasury. tx_root and witness_root are unaffected.
+        tmpl.coinbase = hex::encode(coinbase);
         // Spread nonces across threads: thread t starts at `t`, strides by `n`.
         tmpl.nonce = thread_id;
         let refresh_deadline = Instant::now() + Duration::from_secs(10);
