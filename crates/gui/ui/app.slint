@@ -38,6 +38,8 @@ export component AppWindow inherits Window {
     callback connect_clicked();
     callback mine_toggle();
     callback send_clicked();
+    callback copy_address();
+    callback regenerate_wallet();
 
     VerticalBox {
         padding: 16px;
@@ -58,7 +60,24 @@ export component AppWindow inherits Window {
                     GroupBox {
                         title: "Your address";
                         VerticalBox {
-                            Text { text: root.wallet_address; color: #7cc4ff; font-size: 13px; }
+                            spacing: 6px;
+                            // Read-only LineEdit so the address is selectable
+                            // (Ctrl+A / Ctrl+C) — Slint's plain Text widget is not.
+                            LineEdit {
+                                text: root.wallet_address;
+                                read-only: true;
+                            }
+                            HorizontalBox {
+                                Button {
+                                    text: "Copy";
+                                    clicked => { root.copy_address(); }
+                                }
+                                Button {
+                                    text: "Regenerate (destroys old wallet)";
+                                    clicked => { root.regenerate_wallet(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
                             Text {
                                 text: "Share this address to receive PYG. Mining rewards land here too.";
                                 color: #9aa6b2;

@@ -22,6 +22,8 @@ hex = { workspace = true }
 anyhow = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 ureq = { version = "2.10", default-features = false, features = ["json", "tls"] }
+# Cross-platform clipboard (used by the wallet's Copy button).
+arboard = { version = "3", default-features = false }
 
 [build-dependencies]
 slint-build = { workspace = true }

@@ -42,7 +42,10 @@ fn main() -> Result<(), slint::PlatformError> {
             None
         }
     };
-    let wallet = Rc::new(wallet);
+    // RefCell so the Regenerate button can swap in a fresh keypair without
+    // restarting the app.
+    let wallet: Rc<RefCell<Option<Wallet>>> = Rc::new(RefCell::new(wallet));
+    let wallet_path = Rc::new(wallet_path);
 
     let miner_slot: Rc<RefCell<Option<MinerHandle>>> = Rc::new(RefCell::new(None));
     let last_sample: Rc<RefCell<(Instant, u64)>> = Rc::new(RefCell::new((Instant::now(), 0)));
@@ -92,14 +95,62 @@ fn main() -> Result<(), slint::PlatformError> {
                     // Mining rewards go to whatever AccountId the block's
                     // coinbase[..20] decodes to. Without a wallet loaded we
                     // fall back to all-zeros (effectively burned).
-                    let coinbase = match wallet.as_ref() {
-                        Some(w) => w.address.pad_to_32(),
-                        None => [0u8; 32],
-                    };
+                    let coinbase = wallet
+                        .borrow()
+                        .as_ref()
+                        .map(|w| w.address.pad_to_32())
+                        .unwrap_or([0u8; 32]);
                     let handle = miner::start(url, threads, coinbase);
                     *s = Some(handle);
                     ui.set_mining_on(true);
                     ui.set_mine_status(format!("mining ({threads} threads) → wallet").into());
+                }
+            }
+        }
+    });
+
+    // Copy address to clipboard.
+    ui.on_copy_address({
+        let weak = weak.clone();
+        let wallet = wallet.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let addr = match wallet.borrow().as_ref() {
+                Some(w) => w.address.to_bech32(),
+                None => {
+                    ui.set_send_status("no wallet loaded".into());
+                    return;
+                }
+            };
+            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(addr.clone())) {
+                Ok(_) => ui.set_send_status(format!("copied: {addr}").into()),
+                Err(e) => ui.set_send_status(format!("copy failed: {e}").into()),
+            }
+        }
+    });
+
+    // Generate a fresh keypair, overwriting wallet.json on disk. Old keys are
+    // unrecoverable after this — testnet-only convenience, never use on mainnet.
+    ui.on_regenerate_wallet({
+        let weak = weak.clone();
+        let wallet = wallet.clone();
+        let wallet_path = wallet_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let new = Wallet::generate();
+            match new.save(&wallet_path) {
+                Ok(()) => {
+                    ui.set_wallet_address(new.address.to_bech32().into());
+                    ui.set_wallet_pubkey(hex::encode(&new.public_key).into());
+                    ui.set_balance_sat("0".into());
+                    ui.set_wallet_nonce("0".into());
+                    ui.set_send_status(
+                        format!("regenerated → {}", new.address.to_bech32()).into(),
+                    );
+                    *wallet.borrow_mut() = Some(new);
+                }
+                Err(e) => {
+                    ui.set_send_status(format!("regenerate failed: {e}").into());
                 }
             }
         }
@@ -111,15 +162,20 @@ fn main() -> Result<(), slint::PlatformError> {
         let wallet = wallet.clone();
         move || {
             let Some(ui) = weak.upgrade() else { return };
-            let Some(w) = wallet.as_ref() else {
-                ui.set_send_status("no wallet loaded".into());
-                return;
-            };
             let url = ui.get_rpc_url().to_string();
             let to_str = ui.get_send_to().to_string();
             let amount_str = ui.get_send_amount().to_string();
             let fee_str = ui.get_send_fee().to_string();
-            match build_and_submit_tx(&url, w, &to_str, &amount_str, &fee_str) {
+            // Borrow inside the match so the borrow drops before any await /
+            // ui.set call that might re-enter (none today, but cheap insurance).
+            let result = {
+                let w_ref = wallet.borrow();
+                match w_ref.as_ref() {
+                    Some(w) => build_and_submit_tx(&url, w, &to_str, &amount_str, &fee_str),
+                    None => Err(anyhow::anyhow!("no wallet loaded")),
+                }
+            };
+            match result {
                 Ok(hash) => {
                     ui.set_send_status(format!("submitted: {}", hash).into());
                     ui.set_send_amount("".into());
@@ -169,9 +225,15 @@ fn main() -> Result<(), slint::PlatformError> {
         std::time::Duration::from_secs(3),
         move || {
             let Some(ui) = weak_balance.upgrade() else { return };
-            let Some(w) = wallet_balance.as_ref() else { return };
             let url = ui.get_rpc_url().to_string();
-            if let Ok(info) = rpc_client::get_account(&url, &w.address) {
+            // Snapshot the address so we don't hold the wallet borrow across
+            // a network call.
+            let addr = wallet_balance
+                .borrow()
+                .as_ref()
+                .map(|w| w.address);
+            let Some(addr) = addr else { return };
+            if let Ok(info) = rpc_client::get_account(&url, &addr) {
                 ui.set_balance_sat(info.balance_sat.to_string().into());
                 ui.set_wallet_nonce(info.nonce.to_string().into());
             }
