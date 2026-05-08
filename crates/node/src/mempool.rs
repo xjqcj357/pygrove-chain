@@ -98,10 +98,6 @@ impl Mempool {
         self.inner.lock().unwrap().len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
-    }
-
     pub fn pending_hashes(&self) -> Vec<String> {
         self.inner
             .lock()
