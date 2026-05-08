@@ -9,6 +9,10 @@ description = "PyGrove Chain: post-quantum signature dispatch (Falcon-512, SLH-D
 [dependencies]
 pygrove-core = { path = "../core" }
 thiserror = { workspace = true }
+# Phase A bringup signature: Ed25519 (sig_algo = 3). Replaced by Falcon-512
+# in Phase B via an UpgradeCrypto event on the live testnet.
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
 # Deterministic Falcon (integer sampler). Pin exact version to preserve byte-identical sigs.
 # fn-dsa = { workspace = true }     # uncomment when crate API stabilizes
 # slh-dsa = { workspace = true }    # likewise
