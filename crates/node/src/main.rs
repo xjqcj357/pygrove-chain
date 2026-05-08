@@ -12,9 +12,6 @@ use clap::{Parser, Subcommand};
 use genesis::Genesis;
 use mempool::Mempool;
 use mining::{mine_inline, now_ms, template_from_parent_with_body};
-// `template_from_parent` (no body) is still used by `cmd_init` for genesis;
-// the alias keeps the call site readable there.
-use mining::template_from_parent;
 use pygrove_consensus::pow::{hash_header, meets_target, target_from_bits};
 use pygrove_core::{AccountId, BlockBody, TxBody, Witness};
 use pygrove_state::MemState;
@@ -107,7 +104,7 @@ fn cmd_init(genesis_path: &str, data_dir: &str, _key: &str) -> anyhow::Result<()
     // Genesis coinbase = headline bytes (proof of no prior knowledge).
     // Post-genesis blocks use coinbase = miner account ID.
     let coinbase = g.headline_bytes();
-    let hdr = template_from_parent(
+    let hdr = mining::template_from_parent(
         [0u8; 32],
         0_u64.wrapping_sub(1),
         g.initial_bits,
