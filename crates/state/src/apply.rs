@@ -30,13 +30,13 @@ pub enum ApplyError {
     PubKeyMismatch(usize),
     #[error("tx[{0}]: bad signature ({1})")]
     BadSignature(usize, String),
-    #[error("tx[{0}]: nonce mismatch — got {got}, expected {expected}")]
+    #[error("tx[{idx}]: nonce mismatch — got {got}, expected {expected}")]
     NonceMismatch {
         idx: usize,
         got: u64,
         expected: u64,
     },
-    #[error("tx[{0}]: insufficient balance ({balance} < amount+fee {required})")]
+    #[error("tx[{idx}]: insufficient balance ({balance} < amount+fee {required})")]
     InsufficientBalance {
         idx: usize,
         balance: u128,
@@ -46,7 +46,7 @@ pub enum ApplyError {
     AmountOverflow(usize),
     #[error("tx[{0}]: TxCall variant not supported in Phase A")]
     UnsupportedCall(usize),
-    #[error("tx[{0}]: pubkey algo {algo} disagrees with sig_algo {sig_algo}")]
+    #[error("tx[{idx}]: pubkey algo {algo} disagrees with sig_algo {sig_algo}")]
     AlgoMismatch {
         idx: usize,
         algo: u8,
@@ -109,7 +109,8 @@ pub fn apply_block(
                 expected: tx.expected_nonce,
             });
         }
-        let required = (tx.amount as u128)
+        let required = tx
+            .amount
             .checked_add(tx.fee_sat as u128)
             .ok_or(ApplyError::AmountOverflow(tx.idx))?;
         if from.balance < required {
