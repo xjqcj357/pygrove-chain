@@ -125,6 +125,8 @@
     <div class="stat"><div class="label">Bits</div><div class="val" id="s-bits">—</div></div>
     <div class="stat"><div class="label">Target</div><div class="val mono-small" id="s-target">—</div></div>
     <div class="stat"><div class="label">Sig / Hash algo</div><div class="val" id="s-algo">—</div></div>
+    <div class="stat"><div class="label">Mempool</div><div class="val" id="s-mempool">—</div></div>
+    <div class="stat"><div class="label">Block reward (sat)</div><div class="val" id="s-reward">—</div></div>
   </section>
 
   <div id="detail">
@@ -141,10 +143,11 @@
         <th>hash</th>
         <th style="width:180px">when</th>
         <th style="width:120px">nonce</th>
+        <th style="width:60px">txs</th>
       </tr>
     </thead>
     <tbody id="blocks">
-      <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:24px;">loading…</td></tr>
+      <tr><td colspan="5" style="color:var(--dim);text-align:center;padding:24px;">loading…</td></tr>
     </tbody>
   </table>
 </main>
@@ -211,6 +214,8 @@
       document.getElementById("s-bits").textContent = "0x" + Number(info.bits).toString(16).padStart(8, "0");
       document.getElementById("s-target").textContent = info.target;
       document.getElementById("s-algo").textContent = "sig=" + info.sig_algo + " / hash=" + info.hash_algo;
+      document.getElementById("s-mempool").textContent = info.mempool_size ?? "—";
+      document.getElementById("s-reward").textContent = info.block_reward_sat ?? "—";
 
       // Pre-genesis countdown — visible only while now < genesis_time_ms.
       const pg = document.getElementById("pregenesis");
@@ -237,6 +242,7 @@
            <td class="hash"><a href="#" onclick="showBlock(${b.height});return false;">${truncHash(b.hash)}</a></td>
            <td>${ago(b.timestamp_ms)}</td>
            <td>${b.nonce}</td>
+           <td>${b.tx_count ?? 0}</td>
          </tr>`
       ).join("");
     } catch (e) {
