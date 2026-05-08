@@ -115,3 +115,133 @@ impl Witness {
         out
     }
 }
+
+/// Canonical encoding of a `TxCall` into a hasher. Field order is fixed forever —
+/// changing it changes every signing hash and therefore every existing signature.
+fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
+    match call {
+        TxCall::Transfer { to, amount } => {
+            h.update(&[0u8]);
+            h.update(&to.0);
+            h.update(&amount.to_le_bytes());
+        }
+        TxCall::DeployContract { code_ref, init_args } => {
+            h.update(&[1u8]);
+            h.update(code_ref);
+            h.update(&(init_args.len() as u32).to_le_bytes());
+            h.update(init_args);
+        }
+        TxCall::CallContract { contract, method, args } => {
+            h.update(&[2u8]);
+            h.update(&contract.0);
+            h.update(&(method.len() as u32).to_le_bytes());
+            h.update(method.as_bytes());
+            h.update(&(args.len() as u32).to_le_bytes());
+            h.update(args);
+        }
+        TxCall::UpgradeCrypto {
+            target_height,
+            sig_algo,
+            hash_algo,
+        } => {
+            h.update(&[3u8]);
+            h.update(&target_height.to_le_bytes());
+            h.update(&[*sig_algo, *hash_algo]);
+        }
+    }
+}
+
+impl TxBody {
+    /// Hash that the witness signs. Excludes `witness_hash` itself (which would be
+    /// circular — it's a commitment to the signature) and the `gas_limit` (also a
+    /// post-signing field, paid for separately). Domain tag `PGtxsign\0`.
+    pub fn signing_hash(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(b"PGtxsign\x00");
+        h.update(&self.nonce.to_le_bytes());
+        h.update(&self.from_account.0);
+        hash_call(&mut h, &self.call);
+        h.update(&self.fee_sat.to_le_bytes());
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&h.finalize().as_bytes()[..]);
+        out
+    }
+
+    /// Hash committed in `tx_root` of the block. Includes every field including
+    /// `witness_hash` so the block header binds to a specific signature.
+    pub fn body_hash(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(b"PGtxbody\x00");
+        h.update(&self.nonce.to_le_bytes());
+        h.update(&self.from_account.0);
+        hash_call(&mut h, &self.call);
+        h.update(&self.fee_sat.to_le_bytes());
+        h.update(&self.gas_limit.to_le_bytes());
+        h.update(&self.witness_hash);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&h.finalize().as_bytes()[..]);
+        out
+    }
+}
+
+/// Domain-tagged Merkle-ish root over a vector of leaves. v0.1: simple ordered
+/// concatenation hash, deterministic. Production path swaps to a proper sparse
+/// Merkle tree under the GroveDB rollout.
+pub fn vec_root(domain: &[u8], leaves: &[[u8; 32]]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(domain);
+    h.update(&(leaves.len() as u32).to_le_bytes());
+    for leaf in leaves {
+        h.update(leaf);
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&h.finalize().as_bytes()[..]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_tx() -> TxBody {
+        TxBody {
+            nonce: 7,
+            from_account: AccountId::new([1u8; 20]),
+            call: TxCall::Transfer {
+                to: AccountId::new([2u8; 20]),
+                amount: 1_000,
+            },
+            fee_sat: 10,
+            gas_limit: 21000,
+            witness_hash: [9u8; 32],
+        }
+    }
+
+    #[test]
+    fn signing_hash_excludes_witness() {
+        let mut a = sample_tx();
+        let h_a = a.signing_hash();
+        a.witness_hash = [0u8; 32];
+        let h_b = a.signing_hash();
+        assert_eq!(h_a, h_b, "signing_hash must not depend on witness_hash");
+    }
+
+    #[test]
+    fn body_hash_includes_witness() {
+        let mut a = sample_tx();
+        let h_a = a.body_hash();
+        a.witness_hash = [0u8; 32];
+        let h_b = a.body_hash();
+        assert_ne!(h_a, h_b);
+    }
+
+    #[test]
+    fn signing_hash_changes_with_amount() {
+        let a = sample_tx();
+        let mut b = a.clone();
+        if let TxCall::Transfer { amount, .. } = &mut b.call {
+            *amount = 1_001;
+        }
+        assert_ne!(a.signing_hash(), b.signing_hash());
+    }
+}
