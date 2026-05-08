@@ -250,6 +250,7 @@ fn validate_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Account;
     use pygrove_core::{BlockBody, BlockHeader};
     use pygrove_crypto as crypto;
     use rand_core::OsRng;
