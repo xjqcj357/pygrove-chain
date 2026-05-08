@@ -81,7 +81,17 @@ pub fn rpc_get_info(url: &str) -> anyhow::Result<NodeInfo> {
     })
 }
 
-fn rpc_get_template(url: &str) -> anyhow::Result<(HeaderJson, [u8; 32])> {
+/// Result of a `get_template` call: the header to mine on, the PoW target,
+/// and the body the node expects us to publish back (already committed-to in
+/// `header.tx_root` / `header.witness_root`).
+struct Template {
+    header: HeaderJson,
+    target: [u8; 32],
+    txs_cbor_hex: Vec<String>,
+    witnesses_cbor_hex: Vec<String>,
+}
+
+fn rpc_get_template(url: &str) -> anyhow::Result<Template> {
     let resp = ureq::post(&format!("{url}/rpc"))
         .timeout(Duration::from_secs(5))
         .send_json(serde_json::json!({ "method": "get_template" }))?;
@@ -94,15 +104,45 @@ fn rpc_get_template(url: &str) -> anyhow::Result<(HeaderJson, [u8; 32])> {
     }
     let mut target = [0u8; 32];
     target.copy_from_slice(&target_bytes);
-    Ok((header, target))
+    let txs_cbor_hex: Vec<String> = r["txs_cbor_hex"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let witnesses_cbor_hex: Vec<String> = r["witnesses_cbor_hex"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Template {
+        header,
+        target,
+        txs_cbor_hex,
+        witnesses_cbor_hex,
+    })
 }
 
-fn rpc_submit_block(url: &str, header: &HeaderJson) -> anyhow::Result<bool> {
+fn rpc_submit_block(
+    url: &str,
+    header: &HeaderJson,
+    txs_cbor_hex: &[String],
+    witnesses_cbor_hex: &[String],
+) -> anyhow::Result<bool> {
     let resp = ureq::post(&format!("{url}/rpc"))
         .timeout(Duration::from_secs(5))
         .send_json(serde_json::json!({
             "method": "submit_block",
-            "params": { "header": header }
+            "params": {
+                "header": header,
+                "txs_cbor_hex": txs_cbor_hex,
+                "witnesses_cbor_hex": witnesses_cbor_hex,
+            }
         }))?;
     let v: serde_json::Value = resp.into_json()?;
     Ok(v.get("result").and_then(|r| r["ok"].as_bool()).unwrap_or(false))
@@ -157,7 +197,12 @@ fn worker(
     rejected: Arc<AtomicU64>,
 ) {
     while !stop.load(Ordering::Relaxed) {
-        let (mut tmpl, target) = match rpc_get_template(&url) {
+        let Template {
+            header: mut tmpl,
+            target,
+            txs_cbor_hex,
+            witnesses_cbor_hex,
+        } = match rpc_get_template(&url) {
             Ok(t) => t,
             Err(_) => {
                 thread::sleep(Duration::from_secs(2));
@@ -179,7 +224,7 @@ fn worker(
                 let h = hash_header(&hdr);
                 hashes.fetch_add(1, Ordering::Relaxed);
                 if meets_target(&h, &target) {
-                    match rpc_submit_block(&url, &tmpl) {
+                    match rpc_submit_block(&url, &tmpl, &txs_cbor_hex, &witnesses_cbor_hex) {
                         Ok(true) => accepted.fetch_add(1, Ordering::Relaxed),
                         _ => rejected.fetch_add(1, Ordering::Relaxed),
                     };
