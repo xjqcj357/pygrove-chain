@@ -141,8 +141,9 @@ footer a:hover { color: var(--accent); }
       <div class="address-text" id="addrText">generating…</div>
       <div class="btnrow">
         <button id="btnCopy">Copy</button>
-        <button id="btnRegen">Regenerate (destroys old wallet)</button>
         <button id="btnExport">Export key</button>
+        <button id="btnImport">Import key</button>
+        <button id="btnRegen">Regenerate (destroys old wallet)</button>
       </div>
     </div>
     <p class="muted" style="margin-top:10px;">
@@ -328,6 +329,7 @@ async function init() {
   $('btnCopy').addEventListener('click', copyAddress);
   $('btnRegen').addEventListener('click', regenerateWallet);
   $('btnExport').addEventListener('click', exportKey);
+  $('btnImport').addEventListener('click', importKey);
   $('btnSend').addEventListener('click', sendTx);
   $('btnClear').addEventListener('click', () => {
     $('sendTo').value = ''; $('sendAmount').value = ''; $('sendFee').value = '100';
@@ -371,13 +373,59 @@ function exportKey() {
     sig_algo: WALLET.sig_algo,
     secret_key_hex: WALLET.sk_hex,
     public_key_hex: WALLET.pk_hex,
-    note: 'Phase A Ed25519 keypair. Save this file in a password manager. To restore, paste back into a fresh wallet via Import (coming Phase B).',
+    note: 'Phase A Ed25519 keypair. Save this file in a password manager. To restore, click Import and paste either this whole JSON or just the secret_key_hex value.',
   }, null, 2);
   const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = 'pygrove-wallet.json'; a.click();
   URL.revokeObjectURL(url);
+}
+
+async function importKey() {
+  // Accept: raw 64-char hex, OR full JSON from Export ({secret_key_hex, ...}).
+  const input = window.prompt(
+    'Paste a 64-char secret_key_hex OR the full pygrove-wallet.json from Export.\n' +
+    '\n' +
+    'WARNING: this overwrites the current wallet on this device. ' +
+    'Back up via Export first if you have anything you want to keep.'
+  );
+  if (input == null) return;
+  const raw = input.trim();
+  if (raw.length === 0) return;
+
+  let skHex = null;
+  // If it looks like JSON, try parsing it.
+  if (raw.startsWith('{')) {
+    try {
+      const obj = JSON.parse(raw);
+      if (typeof obj.secret_key_hex === 'string') skHex = obj.secret_key_hex.trim();
+    } catch (e) {
+      setStatus('import: bad JSON: ' + e.message, 'err');
+      return;
+    }
+  } else {
+    skHex = raw;
+  }
+  if (!skHex || !/^[0-9a-fA-F]{64}$/.test(skHex)) {
+    setStatus('import: secret_key_hex must be exactly 64 hex chars (32 bytes)', 'err');
+    return;
+  }
+  try {
+    const sk = hexToBytes(skHex.toLowerCase());
+    const pk = await ed.getPublicKeyAsync(sk);
+    const address = deriveAddress(pk);
+    const w = { sig_algo: 3, sk_hex: bytesToHex(sk), pk_hex: bytesToHex(pk), address };
+    localStorage.setItem(WALLET_KEY, JSON.stringify(w));
+    WALLET = w;
+    $('addrText').textContent = w.address;
+    $('balValue').textContent = '0';
+    $('balNonce').textContent = '0';
+    setStatus('imported → ' + w.address, 'ok');
+    refreshBalance();
+  } catch (e) {
+    setStatus('import: derive failed: ' + (e.message || e), 'err');
+  }
 }
 
 async function refresh() {
