@@ -1,0 +1,15 @@
+# Mobile / browser wallet served at https://str4w.com/.
+# Static-only: this container ships the SPA. TLS termination + RPC reverse
+# proxy live one tier up in the box's main nginx (akiyafinder-frontend).
+
+FROM nginx:alpine
+
+# Replace the default site with our config.
+RUN rm /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Drop the SPA. Single static file; no build step. ESM imports load
+# noble-ed25519 / noble-hashes / scure-base from esm.sh on first visit.
+COPY index.html /usr/share/nginx/html/index.html
+
+EXPOSE 80

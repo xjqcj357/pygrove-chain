@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d10" />
+<title>PyGrove Wallet</title>
+<style>
+:root {
+  --bg: #0b0d10;
+  --bg2: #11151a;
+  --bg3: #161c24;
+  --fg: #e8f0ff;
+  --dim: #9aa6b2;
+  --line: #1e252d;
+  --accent: #7cc4ff;
+  --ok: #7cffa4;
+  --warn: #ffb95c;
+  --bad: #ff7c7c;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 520px; margin: 0 auto; padding: 24px 18px 64px; min-height: 100vh; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 8px; }
+h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.5px; }
+h1 .accent { color: var(--accent); }
+.chain-pick {
+  background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; font: inherit; font-size: 12px;
+  -webkit-appearance: none; appearance: none;
+}
+.netbadge {
+  display: inline-block; padding: 2px 8px;
+  background: var(--bg2); border: 1px solid var(--warn);
+  color: var(--warn); border-radius: 4px;
+  font-size: 10px; letter-spacing: 1px; margin-left: 8px; vertical-align: middle;
+}
+section {
+  background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+}
+section h2 {
+  margin: 0 0 10px 0; font-size: 11px;
+  color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;
+}
+.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 64px; }
+input[type=text], input[type=number], textarea {
+  flex: 1; background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 12px; font: inherit; font-size: 13px; min-width: 0;
+}
+input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input[readonly] { color: var(--accent); }
+button {
+  background: var(--bg3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 14px; font: inherit; font-size: 13px;
+  cursor: pointer; transition: border-color 0.15s, color 0.15s;
+}
+button:hover, button:active { border-color: var(--accent); color: var(--accent); }
+button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+button.primary:hover, button.primary:active { background: #5fb3f0; color: var(--bg); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.address-box { display: flex; flex-direction: column; gap: 8px; }
+.address-text {
+  font-size: 12px; word-break: break-all; color: var(--accent);
+  background: var(--bg3); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line);
+  user-select: all; -webkit-user-select: all;
+}
+.balance { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; color: var(--fg); }
+.balance .unit { font-size: 12px; color: var(--dim); margin-left: 6px; font-weight: 400; }
+.muted { color: var(--dim); font-size: 11px; }
+.kvgrid { display: grid; grid-template-columns: 80px 1fr; gap: 6px 12px; font-size: 12px; }
+.kvgrid .k { color: var(--dim); }
+.kvgrid .v { color: var(--fg); word-break: break-all; }
+.kvgrid .v.tip { color: var(--accent); font-size: 11px; }
+.btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.status {
+  margin-top: 10px; padding: 10px 12px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  font-size: 12px; color: var(--dim); min-height: 38px; word-break: break-all;
+}
+.status.ok { color: var(--ok); border-color: var(--ok); }
+.status.err { color: var(--bad); border-color: var(--bad); }
+.status.info { color: var(--accent); }
+.countdown {
+  background: linear-gradient(135deg,#1a1f2a 0%,#11151a 100%);
+  border: 1px solid var(--accent); border-radius: 10px;
+  padding: 16px; margin-bottom: 14px;
+}
+.countdown .lbl { color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+.countdown .clock { font-size: 22px; margin: 6px 0 4px 0; font-variant-numeric: tabular-nums; color: var(--fg); }
+.countdown .when { color: var(--dim); font-size: 11px; }
+footer {
+  margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 10px; line-height: 1.6;
+}
+footer a { color: var(--dim); }
+footer a:hover { color: var(--accent); }
+.hide { display: none !important; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--dim); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.bad { background: var(--bad); }
+@media (max-width: 380px) {
+  h1 { font-size: 19px; }
+  .balance { font-size: 22px; }
+  label { min-width: 52px; font-size: 10px; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <h1>Py<span class="accent">Grove</span> Wallet
+      <span class="netbadge" id="netBadge">…</span>
+    </h1>
+    <select id="chainPick" class="chain-pick">
+      <option value="testnet">testnet</option>
+      <option value="mainnet">mainnet</option>
+    </select>
+  </header>
+
+  <div id="countdown" class="countdown hide">
+    <div class="lbl">Pre-genesis · fair launch lockout</div>
+    <div class="clock" id="cdClock">T-—</div>
+    <div class="when" id="cdWhen">—</div>
+  </div>
+
+  <section>
+    <h2>Your address</h2>
+    <div class="address-box">
+      <div class="address-text" id="addrText">generating…</div>
+      <div class="btnrow">
+        <button id="btnCopy">Copy</button>
+        <button id="btnRegen">Regenerate (destroys old wallet)</button>
+        <button id="btnExport">Export key</button>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:10px;">
+      Stored in <code>localStorage</code> on this device. Phase A: plaintext;
+      Phase B encrypts. Same address works on any chain.
+    </p>
+  </section>
+
+  <section>
+    <h2>Balance</h2>
+    <div class="balance"><span id="balValue">0</span><span class="unit">sat</span></div>
+    <div class="kvgrid" style="margin-top:8px;">
+      <div class="k">nonce</div><div class="v" id="balNonce">0</div>
+      <div class="k">net</div>  <div class="v" id="netStatus"><span class="dot" id="netDot"></span><span id="netStatusText">connecting…</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Send</h2>
+    <div class="row">
+      <label>to</label>
+      <input id="sendTo" type="text" inputmode="text" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="pyg1..." />
+    </div>
+    <div class="row">
+      <label>amount</label>
+      <input id="sendAmount" type="text" inputmode="numeric" placeholder="sat" />
+    </div>
+    <div class="row">
+      <label>fee</label>
+      <input id="sendFee" type="text" inputmode="numeric" value="100" />
+    </div>
+    <div class="btnrow">
+      <button id="btnSend" class="primary">Sign &amp; submit</button>
+      <button id="btnClear">Clear</button>
+    </div>
+    <div class="status" id="sendStatus">enter a recipient address</div>
+  </section>
+
+  <section>
+    <h2>Chain</h2>
+    <div class="kvgrid">
+      <div class="k">chain</div><div class="v" id="cChainId">—</div>
+      <div class="k">height</div><div class="v" id="cHeight">—</div>
+      <div class="k">tip</div>  <div class="v tip" id="cTip">—</div>
+      <div class="k">target</div><div class="v tip" id="cTarget">—</div>
+      <div class="k">mempool</div><div class="v" id="cMempool">—</div>
+      <div class="k">reward</div><div class="v" id="cReward">—</div>
+    </div>
+  </section>
+
+  <footer>
+    Open source · <a href="https://github.com/xjqcj357/pygrove-chain" target="_blank" rel="noopener">github</a>
+    · <a href="https://github.com/xjqcj357/pygrove-chain/blob/main/docs/whitepaper.md" target="_blank" rel="noopener">whitepaper</a>
+    · all signing happens in your browser. The server never sees your secret key.
+  </footer>
+
+</div>
+
+<script type="module">
+// --- imports (esm.sh CDN, MIT-licensed, pinned versions) -------------------
+// noble-ed25519 v2 — async ed25519 signing/verify (RFC 8032, deterministic).
+// noble-hashes — blake3 (matches Rust @noble/hashes blake3 + ed25519-dalek byte-for-byte).
+// scure-base — bech32m encode/decode with the `pyg` HRP.
+import * as ed       from 'https://esm.sh/@noble/ed25519@2.1.0';
+import { blake3 }    from 'https://esm.sh/@noble/hashes@1.4.0/blake3';
+import { bech32m }   from 'https://esm.sh/@scure/base@1.1.6';
+
+// noble-ed25519 v2 needs a sync-safe sha-512 wired in (its only required injection).
+// Pull it from noble-hashes too so we don't ship two SHA-512s.
+import { sha512 }    from 'https://esm.sh/@noble/hashes@1.4.0/sha512';
+ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+
+// --- chain selector --------------------------------------------------------
+// Per-chain RPC endpoint. Same-origin https proxy on str4w.com → backend node.
+const CHAINS = {
+  testnet: { label: 'testnet', api: '/api/testnet/rpc' },
+  mainnet: { label: 'mainnet', api: '/api/mainnet/rpc' },
+};
+const CHAIN_KEY = 'pyg_chain';
+function getChain() {
+  const v = localStorage.getItem(CHAIN_KEY);
+  return CHAINS[v] ? v : 'testnet';
+}
+function setChain(v) {
+  if (CHAINS[v]) localStorage.setItem(CHAIN_KEY, v);
+}
+
+// --- wallet (Ed25519, persisted to localStorage) ---------------------------
+const WALLET_KEY = 'pyg_wallet_v1';
+const HRP = 'pyg';
+const ADDR_TAG = new Uint8Array([0x50,0x47,0x61,0x64,0x64,0x72,0x00]); // "PGaddr\0"
+const TXSIGN_TAG = new Uint8Array([0x50,0x47,0x74,0x78,0x73,0x69,0x67,0x00]); // "PGtxsign\0"
+
+function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); }
+function hexToBytes(s) { const out = new Uint8Array(s.length / 2); for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i*2, 2), 16); return out; }
+function concat(...arrs) { const len = arrs.reduce((n, a) => n + a.length, 0); const out = new Uint8Array(len); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; }
+function u64le(n) { const b = new Uint8Array(8); const big = BigInt(n); for (let i = 0; i < 8; i++) b[i] = Number((big >> BigInt(i * 8)) & 0xffn); return b; }
+function u128le(n) { const b = new Uint8Array(16); const big = BigInt(n); for (let i = 0; i < 16; i++) b[i] = Number((big >> BigInt(i * 8)) & 0xffn); return b; }
+
+function deriveAddress(pubkeyBytes) {
+  // Match Rust's AccountId::from_pubkey: blake3("PGaddr\0" || pubkey)[..20].
+  const digest = blake3(concat(ADDR_TAG, pubkeyBytes));
+  const id20 = digest.slice(0, 20);
+  return bech32m.encode(HRP, bech32m.toWords(id20));
+}
+function decodeAddress(addr) {
+  const { prefix, words } = bech32m.decode(addr);
+  if (prefix !== HRP) throw new Error(`wrong hrp: ${prefix}`);
+  const bytes = bech32m.fromWords(words);
+  if (bytes.length !== 20) throw new Error(`address length ${bytes.length} ≠ 20`);
+  return new Uint8Array(bytes);
+}
+
+async function generateWallet() {
+  const sk = ed.utils.randomPrivateKey();          // 32 bytes
+  const pk = await ed.getPublicKeyAsync(sk);        // 32 bytes
+  const address = deriveAddress(pk);
+  const w = { sig_algo: 3, sk_hex: bytesToHex(sk), pk_hex: bytesToHex(pk), address };
+  localStorage.setItem(WALLET_KEY, JSON.stringify(w));
+  return w;
+}
+async function loadOrCreate() {
+  const raw = localStorage.getItem(WALLET_KEY);
+  if (raw) {
+    try { return JSON.parse(raw); } catch (e) { /* fall through */ }
+  }
+  return generateWallet();
+}
+
+// --- canonical signing_hash (must byte-match Rust TxBody::signing_hash) ----
+// Rust:
+//   PGtxsign\0 || nonce_le8 || from_account20 || hash_call(call) || fee_sat_le8
+// hash_call(Transfer { to, amount }) = 0x00 || to20 || amount_le16
+function signingHash({ nonce, fromAccount20, toAccount20, amountSat, feeSat }) {
+  const callBytes = concat(
+    new Uint8Array([0x00]),  // TxCall::Transfer discriminator
+    toAccount20,
+    u128le(amountSat),
+  );
+  const preimage = concat(
+    TXSIGN_TAG,
+    u64le(nonce),
+    fromAccount20,
+    callBytes,
+    u64le(feeSat),
+  );
+  return blake3(preimage); // 32 bytes
+}
+
+// --- RPC -------------------------------------------------------------------
+async function rpc(method, params) {
+  const ch = CHAINS[getChain()];
+  const r = await fetch(ch.api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, params: params || {} }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.result;
+}
+
+// --- UI bindings -----------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+
+let WALLET = null;
+
+async function init() {
+  // Chain selector
+  $('chainPick').value = getChain();
+  $('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+  $('chainPick').addEventListener('change', (e) => {
+    setChain(e.target.value);
+    $('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+    refresh(); refreshBalance();
+  });
+
+  // Wallet
+  WALLET = await loadOrCreate();
+  $('addrText').textContent = WALLET.address;
+
+  // Buttons
+  $('btnCopy').addEventListener('click', copyAddress);
+  $('btnRegen').addEventListener('click', regenerateWallet);
+  $('btnExport').addEventListener('click', exportKey);
+  $('btnSend').addEventListener('click', sendTx);
+  $('btnClear').addEventListener('click', () => {
+    $('sendTo').value = ''; $('sendAmount').value = ''; $('sendFee').value = '100';
+    setStatus('cleared', '');
+  });
+
+  refresh();
+  refreshBalance();
+  setInterval(refresh, 4000);
+  setInterval(refreshBalance, 4000);
+}
+
+function setStatus(msg, kind) {
+  const el = $('sendStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (kind || '');
+}
+
+async function copyAddress() {
+  try {
+    await navigator.clipboard.writeText(WALLET.address);
+    setStatus('copied: ' + WALLET.address, 'ok');
+  } catch (e) {
+    setStatus('copy failed: ' + e.message, 'err');
+  }
+}
+
+async function regenerateWallet() {
+  if (!confirm('This destroys your current wallet. Old keys cannot be recovered. Continue?')) return;
+  WALLET = await generateWallet();
+  $('addrText').textContent = WALLET.address;
+  $('balValue').textContent = '0';
+  $('balNonce').textContent = '0';
+  setStatus('regenerated → ' + WALLET.address, 'ok');
+}
+
+function exportKey() {
+  const text = JSON.stringify({
+    chain: getChain(),
+    address: WALLET.address,
+    sig_algo: WALLET.sig_algo,
+    secret_key_hex: WALLET.sk_hex,
+    public_key_hex: WALLET.pk_hex,
+    note: 'Phase A Ed25519 keypair. Save this file in a password manager. To restore, paste back into a fresh wallet via Import (coming Phase B).',
+  }, null, 2);
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'pygrove-wallet.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function refresh() {
+  try {
+    const info = await rpc('get_info');
+    $('cChainId').textContent = info.chain_id;
+    $('cHeight').textContent = info.height;
+    $('cTip').textContent = info.tip_hash;
+    $('cTarget').textContent = info.target;
+    $('cMempool').textContent = info.mempool_size ?? '—';
+    $('cReward').textContent = info.block_reward_sat ?? '—';
+    $('netDot').className = 'dot ok';
+    $('netStatusText').textContent = info.chain_id;
+
+    // Pre-genesis countdown.
+    const offset = Number(info.genesis_offset_ms ?? 0);
+    if (offset < 0) {
+      $('countdown').classList.remove('hide');
+      $('cdClock').textContent = 'T-' + fmtCountdown(-offset);
+      $('cdWhen').textContent = 'Block 1 opens at ' + new Date(Number(info.genesis_time_ms)).toUTCString();
+    } else {
+      $('countdown').classList.add('hide');
+    }
+  } catch (e) {
+    $('netDot').className = 'dot bad';
+    $('netStatusText').textContent = 'unreachable: ' + e.message;
+  }
+}
+
+async function refreshBalance() {
+  if (!WALLET) return;
+  try {
+    const acct = await rpc('get_account', { address: WALLET.address });
+    $('balValue').textContent = acct.balance_sat;
+    $('balNonce').textContent = acct.nonce;
+  } catch (e) {
+    // Stay on previous value, network panel shows the error already.
+  }
+}
+
+function fmtCountdown(ms) {
+  if (ms <= 0) return '0s';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm ' + sec + 's';
+  if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
+  if (m > 0) return m + 'm ' + sec + 's';
+  return sec + 's';
+}
+
+async function sendTx() {
+  setStatus('preparing…', 'info');
+  try {
+    const toAddr = $('sendTo').value.trim();
+    const amount = BigInt(($('sendAmount').value || '0').trim());
+    const fee = BigInt(($('sendFee').value || '0').trim());
+    if (!toAddr) throw new Error('recipient address required');
+    if (amount <= 0n) throw new Error('amount must be > 0');
+
+    // Sanity: decode the recipient before we hash anything.
+    const toBytes = decodeAddress(toAddr);
+    const fromBytes = decodeAddress(WALLET.address);
+    const sk = hexToBytes(WALLET.sk_hex);
+    const pk = hexToBytes(WALLET.pk_hex);
+
+    setStatus('fetching nonce…', 'info');
+    const acct = await rpc('get_account', { address: WALLET.address });
+    if (BigInt(acct.balance_sat) < amount + fee) {
+      throw new Error(`balance ${acct.balance_sat} < amount+fee ${amount + fee}`);
+    }
+
+    // Compute signing_hash CLIENT-SIDE so a tampering server can't trick us
+    // into signing different fields than what's in the form. Server will
+    // recompute the same hash and our sig must validate against it.
+    const hash = signingHash({
+      nonce: acct.nonce,
+      fromAccount20: fromBytes,
+      toAccount20: toBytes,
+      amountSat: amount,
+      feeSat: fee,
+    });
+
+    setStatus('signing…', 'info');
+    const sig = await ed.signAsync(hash, sk);
+
+    setStatus('submitting…', 'info');
+    const result = await rpc('submit_transfer', {
+      from_address: WALLET.address,
+      to_address: toAddr,
+      amount_sat: amount.toString(),
+      fee_sat: fee.toString(),
+      nonce: acct.nonce,
+      pubkey_hex: bytesToHex(pk),
+      sig_hex: bytesToHex(sig),
+    });
+    setStatus('submitted: ' + result.tx_hash, 'ok');
+    $('sendTo').value = ''; $('sendAmount').value = '';
+    refreshBalance();
+  } catch (e) {
+    setStatus('error: ' + (e.message || e), 'err');
+  }
+}
+
+init();
+</script>
+</body>
+</html>
