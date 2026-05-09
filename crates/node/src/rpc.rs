@@ -235,6 +235,27 @@ struct SubmitTxResp {
     tx_hash: String,
 }
 
+/// Mobile / browser wallet path. Same effect as `submit_tx` but the wallet
+/// only needs ed25519 + blake3 + bech32 client-side — the server handles
+/// CBOR. The wallet computes `signing_hash` itself, so the server can't
+/// trick it into signing different fields than the user filled in: any
+/// mismatch makes the verify step fail.
+#[derive(Debug, Deserialize)]
+struct SubmitTransferReq {
+    /// bech32m `pyg1...` of the sender. Must derive from `pubkey_hex`.
+    from_address: String,
+    /// bech32m `pyg1...` of the recipient.
+    to_address: String,
+    amount_sat: u128,
+    fee_sat: u64,
+    /// Sender's current account nonce. Wallet fetched it via `get_account`.
+    nonce: u64,
+    /// Sender's pubkey. 32 bytes (Ed25519). hex.
+    pubkey_hex: String,
+    /// Ed25519 signature over `signing_hash`. 64 bytes. hex.
+    sig_hex: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct AddrReq {
     /// bech32m `pyg1...` address.
@@ -363,6 +384,13 @@ fn dispatch(rpc: RpcReq, st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
             },
             Err(e) => json_err(400, &format!("bad params: {e}")),
         },
+        "submit_transfer" => match serde_json::from_value::<SubmitTransferReq>(rpc.params) {
+            Ok(req) => match submit_transfer(st, req) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(400, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
         "get_balance" => match serde_json::from_value::<AddrReq>(rpc.params) {
             Ok(req) => match get_balance(st, &req.address) {
                 Ok(v) => json_ok(200, &RpcOk { result: v }),
@@ -412,6 +440,74 @@ fn submit_tx(st: &NodeState, req: SubmitTxReq) -> anyhow::Result<SubmitTxResp> {
 
 fn parse_address(s: &str) -> anyhow::Result<AccountId> {
     AccountId::from_bech32(s).map_err(|e| anyhow::anyhow!("address: {e}"))
+}
+
+fn submit_transfer(st: &NodeState, req: SubmitTransferReq) -> anyhow::Result<SubmitTxResp> {
+    use pygrove_core::{PubKeyRef, TxCall};
+    let from = parse_address(&req.from_address)?;
+    let to = parse_address(&req.to_address)?;
+    let pubkey =
+        hex::decode(&req.pubkey_hex).map_err(|e| anyhow::anyhow!("pubkey hex: {e}"))?;
+    let sig = hex::decode(&req.sig_hex).map_err(|e| anyhow::anyhow!("sig hex: {e}"))?;
+    // Defence in depth: the sender's claimed address must match the pubkey
+    // they're using. Catches mistakes before we waste a sig-verify cycle.
+    let derived = AccountId::from_pubkey(&pubkey);
+    if derived != from {
+        anyhow::bail!(
+            "from_address does not derive from pubkey: claimed={}, derived={}",
+            from,
+            derived
+        );
+    }
+    // Build the canonical TxBody. witness_hash is filled in after we know
+    // the witness shape (Inline vs Known); signing_hash excludes it anyway.
+    let mut tx = TxBody {
+        nonce: req.nonce,
+        from_account: from,
+        call: TxCall::Transfer {
+            to,
+            amount: req.amount_sat,
+        },
+        fee_sat: req.fee_sat,
+        gas_limit: 21_000,
+        witness_hash: [0u8; 32],
+    };
+    let signing_hash = tx.signing_hash();
+    // Phase A bringup signature: Ed25519 (sig_algo = 3).
+    pygrove_crypto::verify(3, &pubkey, &sig, &signing_hash)
+        .map_err(|e| anyhow::anyhow!("signature: {e}"))?;
+    // Pubkey shape: Inline if this account hasn't signed before, Known
+    // (cheaper) if its key is already committed to state.
+    let pubkey_ref = {
+        let state = st.state.lock().unwrap();
+        let acct = pygrove_state::accounts::load_or_default(&*state, &from);
+        if acct.pubkey.is_empty() {
+            PubKeyRef::Inline(pubkey)
+        } else {
+            PubKeyRef::Known(from)
+        }
+    };
+    let witness = pygrove_core::Witness {
+        sig_algo: 3,
+        sig,
+        pubkey: pubkey_ref,
+    };
+    tx.witness_hash = witness.hash();
+    let hash = st
+        .mempool
+        .submit(tx, witness)
+        .map_err(|e| anyhow::anyhow!("mempool reject: {e}"))?;
+    tracing::info!(
+        from = %from,
+        to_addr = %req.to_address,
+        amount = req.amount_sat,
+        tx_hash = %hex::encode(hash),
+        "submit_transfer accepted"
+    );
+    Ok(SubmitTxResp {
+        ok: true,
+        tx_hash: hex::encode(hash),
+    })
 }
 
 fn get_balance(st: &NodeState, address: &str) -> anyhow::Result<BalanceResp> {
