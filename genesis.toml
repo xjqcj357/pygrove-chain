@@ -1,13 +1,23 @@
-# PyGrove Chain — TESTNET-3 genesis
+# PyGrove Chain — TESTNET-4 genesis
 #
-# Fair-launch ceremony (unchanged from testnet-2):
+# Fair-launch ceremony (24-hour public-announcement window):
 #   - genesis_time_ms is a future, publicly-announced wall-clock time.
 #   - The node refuses any block submission while now() < genesis_time_ms.
 #   - Block 1 must have timestamp >= parent.timestamp_ms (= genesis_time_ms).
 #   - The genesis coinbase carries genesis_headline_hex — a Bitcoin block hash
 #     mined before our deploy, as proof-of-no-prior-knowledge.
+#   - 24-hour announce window: nobody can mine until the wall clock catches up,
+#     so anyone can spin up a node from a clean clone before block 1 lands.
 #
-# What's new in testnet-3:
+# What's new in testnet-4:
+#   - Same protocol as testnet-3 (calendar emission + ASERT-2D + bootstrap mode).
+#   - Fresh genesis with a 24-hour public announce window, so the launch is
+#     verifiably non-premined: the source is public for 24 hours before mining
+#     can start.
+#   - Windows builds for `pygrove-node.exe` + `pygrove-cli.exe` shipped from
+#     CI alongside `pygrove-gui.exe`.
+#
+# What's new in testnet-3 (kept):
 #   - **Calendar-driven emission.** Per-block reward is no longer a constant;
 #     it's a delta against `scheduled_supply_at(timestamp)`, capped per-block.
 #     Fixes the testnet-2 inflation bug (economic loop running faster than
@@ -15,11 +25,11 @@
 #   - `seconds_per_halving` field added (was implicit at 4 years).
 #   - Same `pyg1...` addresses as testnet-2 — keys port forward unchanged.
 
-chain_id                = "pygrove-testnet-3"
-genesis_time_ms         = 1778382000000        # 2026-05-10 03:00:00 UTC
-genesis_headline_hex    = "00000000000000000001e971a5490ac3ccd5c35f358196a06095214230185d10"
-# ^ Bitcoin block 948704. Embedded into the genesis coinbase slot as
-#   proof-of-no-prior-knowledge for the testnet-3 fair-launch ceremony.
+chain_id                = "pygrove-testnet-4"
+genesis_time_ms         = 1778468929000        # 2026-05-11 03:08:49 UTC (+24h)
+genesis_headline_hex    = "00000000000000000000b1bb4f3506940ad5af17eb7a51d91ab5745dd738760d"
+# ^ Bitcoin block 948713. Embedded into the genesis coinbase slot as
+#   proof-of-no-prior-knowledge for the testnet-4 fair-launch ceremony.
 
 # Bitcoin-curve skeleton — same as testnet-2 (laptop-mineable initial bits).
 initial_bits            = 0x1f00ffff

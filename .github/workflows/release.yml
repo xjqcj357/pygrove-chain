@@ -45,3 +45,20 @@ jobs:
             target/release/pygrove-node
             target/release/pygrove-cli
           if-no-files-found: error
+
+  node-windows:
+    name: pygrove-node.exe + cli (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build node + cli
+        run: cargo build --release --bin pygrove-node --bin pygrove-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pygrove-node-windows-x86_64
+          path: |
+            target/release/pygrove-node.exe
+            target/release/pygrove-cli.exe
+          if-no-files-found: error
