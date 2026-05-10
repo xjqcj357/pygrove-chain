@@ -41,6 +41,24 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      # Roadmap #5: FIPS-profile build. Exercises the
+      # `pygrove-crypto/fips` feature flag, which:
+      #   - refuses Ed25519 (sig_algo=3) at the dispatch boundary,
+      #   - swaps `active_allowlist_*` to `FIPS_ALLOWLIST_*`,
+      #   - propagates to `pygrove-state` so `UpgradeCrypto` apply gates
+      #     governance rotations against the FIPS allowlist.
+      # Builds and tests crates that have a FIPS variant. Crates without
+      # the feature (core, consensus, gui) are excluded so cargo doesn't
+      # error on `--features fips` for crates that don't declare it.
+      - name: cargo build --features fips
+        run: cargo build -p pygrove-crypto -p pygrove-state -p pygrove-node --features fips
+
+      - name: cargo test --features fips
+        run: cargo test -p pygrove-crypto -p pygrove-state --features fips
+
+      - name: cargo clippy --features fips
+        run: cargo clippy -p pygrove-crypto -p pygrove-state -p pygrove-node --features fips --all-targets -- -D warnings
+
   sim:
     name: python sim smoke test
     runs-on: ubuntu-latest

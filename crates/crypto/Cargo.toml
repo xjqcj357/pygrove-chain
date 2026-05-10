@@ -16,3 +16,15 @@ rand_core = { workspace = true }
 # Deterministic Falcon (integer sampler). Pin exact version to preserve byte-identical sigs.
 # fn-dsa = { workspace = true }     # uncomment when crate API stabilizes
 # slh-dsa = { workspace = true }    # likewise
+
+[features]
+default = []
+# FIPS-profile build. When enabled:
+#   - Ed25519 (sig_algo=3) is rejected at the dispatch boundary. Only the
+#     FIPS-approved algos (SLH-DSA-128s = 2, ML-DSA-65 = 4, SHA3-512 = 3)
+#     remain callable.
+#   - `allowed_sig()`/`allowed_hash()` consult `FIPS_ALLOWLIST_*`.
+#   - Used by `UpgradeCrypto` validation in `crates/state` to refuse
+#     governance rotations to non-FIPS algos on a FIPS-profile node.
+# Prerequisite for FedRAMP / FIPS-140-3 module submission.
+fips = []

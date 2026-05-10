@@ -31,3 +31,11 @@ toml = { workspace = true }
 tiny_http = { workspace = true }
 thiserror = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
+
+[features]
+default = []
+# FIPS-profile build. Forwards to `pygrove-state/fips` and
+# `pygrove-crypto/fips`. Enables `UpgradeCrypto` allowlist enforcement
+# and refuses Ed25519 at the dispatch boundary. Prerequisite for
+# FedRAMP / FIPS-140-3 module submission.
+fips = ["pygrove-state/fips", "pygrove-crypto/fips"]

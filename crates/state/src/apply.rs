@@ -78,6 +78,10 @@ pub enum ApplyError {
         algo: u8,
         sig_algo: u8,
     },
+    #[error("tx[{idx}]: UpgradeCrypto target sig_algo {sig_algo} not in this build's allowlist")]
+    UpgradeSigAlgoNotAllowed { idx: usize, sig_algo: u8 },
+    #[error("tx[{idx}]: UpgradeCrypto target hash_algo {hash_algo} not in this build's allowlist")]
+    UpgradeHashAlgoNotAllowed { idx: usize, hash_algo: u8 },
     #[error("coinbase reward overflow")]
     CoinbaseOverflow,
 }
@@ -195,6 +199,25 @@ pub fn apply_block(
                 sig_algo,
                 hash_algo,
             } => {
+                // FIPS-profile gate (#5 on the sprint roadmap). On a node built
+                // with `cargo build --features fips`, `pygrove_crypto::allowed_*`
+                // consults `FIPS_ALLOWLIST_*`, which excludes Ed25519 and
+                // Falcon-512. Default builds use the wider allowlist. Either
+                // way, governance announcements that target an algo this build
+                // refuses to honor are rejected at apply time, before anything
+                // is written to `Subtree::Meta`.
+                if !pygrove_crypto::allowed_sig(*sig_algo) {
+                    return Err(ApplyError::UpgradeSigAlgoNotAllowed {
+                        idx: i,
+                        sig_algo: *sig_algo,
+                    });
+                }
+                if !pygrove_crypto::allowed_hash(*hash_algo) {
+                    return Err(ApplyError::UpgradeHashAlgoNotAllowed {
+                        idx: i,
+                        hash_algo: *hash_algo,
+                    });
+                }
                 // Stub: any account can announce a rotation today; the
                 // governance-key threshold check lands with the SLH-DSA
                 // wiring (DARPA C1, Raytheon FIPS path). Recorded so the
@@ -345,7 +368,10 @@ fn validate_tx(
     })
 }
 
-#[cfg(test)]
+// The default-build tests rely on `pygrove_crypto::ed25519_keypair`, which
+// only compiles when `--features fips` is OFF. FIPS-build tests live in
+// `tests_fips` below and exercise the allowlist-rejection paths instead.
+#[cfg(all(test, not(feature = "fips")))]
 mod tests {
     use super::*;
     use crate::Account;
@@ -489,5 +515,76 @@ mod tests {
             apply_block(&mut store, &block, 50),
             Err(ApplyError::WitnessHashMismatch(_)) | Err(ApplyError::BadSignature(_, _))
         ));
+    }
+
+    /// Default-build allowlist sanity check. UpgradeCrypto targeting an algo
+    /// id outside `DEFAULT_ALLOWLIST_*` gets refused — even though this is
+    /// not a FIPS build, sig_algo=99 isn't a known primitive.
+    #[test]
+    fn upgrade_crypto_rejects_unknown_sig_algo() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+
+        let mut tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::UpgradeCrypto {
+                target_height: 1_000_000,
+                sig_algo: 99, // not in DEFAULT_ALLOWLIST_SIG
+                hash_algo: 1,
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let sig = crypto::sign(3, &alice_sk, &tx.signing_hash()).unwrap();
+        let witness = Witness {
+            sig_algo: 3,
+            sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        tx.witness_hash = witness.hash();
+
+        let block = Block {
+            header: empty_header(),
+            body: BlockBody {
+                txs: vec![tx],
+                witnesses: vec![witness],
+            },
+        };
+        assert!(matches!(
+            apply_block(&mut store, &block, 50),
+            Err(ApplyError::UpgradeSigAlgoNotAllowed { sig_algo: 99, .. })
+        ));
+    }
+}
+
+/// FIPS-profile tests. `pygrove_crypto::ed25519_keypair` is unavailable in
+/// FIPS builds, so we can't construct real signed transactions here. These
+/// tests exercise the static allowlist surface and confirm `UpgradeCrypto`
+/// would reject Ed25519 (sig_algo=3) under a FIPS build's allowlist.
+#[cfg(all(test, feature = "fips"))]
+mod tests_fips {
+    #[test]
+    fn fips_allowlists_active() {
+        assert!(pygrove_crypto::is_fips_build());
+        assert!(!pygrove_crypto::allowed_sig(1)); // Falcon-512 not in FIPS
+        assert!(!pygrove_crypto::allowed_sig(3)); // Ed25519 not in FIPS
+        assert!(pygrove_crypto::allowed_sig(2)); // SLH-DSA-128s
+        assert!(pygrove_crypto::allowed_sig(4)); // ML-DSA-65
+        assert!(pygrove_crypto::allowed_hash(3)); // SHA3-512
+        assert!(!pygrove_crypto::allowed_hash(1)); // Blake3-XOF-512
     }
 }

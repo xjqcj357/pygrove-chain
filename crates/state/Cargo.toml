@@ -17,3 +17,10 @@ ciborium = { workspace = true }
 
 [dev-dependencies]
 rand_core = { workspace = true, features = ["getrandom"] }
+
+[features]
+default = []
+# Forwarded to `pygrove-crypto/fips`. Enables FIPS-allowlist enforcement
+# in `UpgradeCrypto` apply: governance rotations to non-FIPS algos are
+# rejected at apply time on a FIPS-profile node.
+fips = ["pygrove-crypto/fips"]
