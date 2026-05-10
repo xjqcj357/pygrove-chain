@@ -59,6 +59,11 @@ slint-build = "1.8"
 toml = "0.8"
 tiny_http = "0.12"
 serde_json = "1"
+# Contract VM (v0.5+ scope). Wasmtime over CPython per Palantir oversight —
+# CMVP can't validate an interpreted-Python boundary; wasmtime gives us a
+# clean cryptographic boundary. Optional via `pygrove-vm/wasm`.
+wasmtime = { version = "27", default-features = false, features = ["cranelift", "runtime", "gc"] }
+wat = "1"
 
 [profile.release]
 opt-level = 3

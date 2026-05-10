@@ -59,6 +59,18 @@ jobs:
       - name: cargo clippy --features fips
         run: cargo clippy -p pygrove-crypto -p pygrove-state -p pygrove-node --features fips --all-targets -- -D warnings
 
+      # Roadmap #1: WASM contract VM. Pulls in wasmtime (~100 transitive
+      # crates), so we only compile + test the vm crate, not the whole
+      # workspace, to keep CI bounded.
+      - name: cargo build pygrove-vm --features wasm
+        run: cargo build -p pygrove-vm --features wasm --all-targets
+
+      - name: cargo test pygrove-vm --features wasm
+        run: cargo test -p pygrove-vm --features wasm
+
+      - name: cargo clippy pygrove-vm --features wasm
+        run: cargo clippy -p pygrove-vm --features wasm --all-targets -- -D warnings
+
   sim:
     name: python sim smoke test
     runs-on: ubuntu-latest

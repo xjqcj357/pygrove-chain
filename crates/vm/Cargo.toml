@@ -4,9 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "PyGrove Chain: sandboxed Python contract VM (v1.2 scope)"
+description = "PyGrove Chain: WASM contract VM (v0.5+ scope)"
 
 [dependencies]
 pygrove-core = { path = "../core" }
 pygrove-state = { path = "../state" }
 thiserror = { workspace = true }
+# Optional WASM backend. Default off — pulls in wasmtime (~100 transitive
+# crates). Enable with `cargo build -p pygrove-vm --features wasm`.
+wasmtime = { workspace = true, optional = true }
+# Used by the wasm backend for content-addressed contract hashes. Optional
+# so the default build doesn't pull blake3 just for this crate.
+blake3 = { workspace = true, optional = true }
+
+[dev-dependencies]
+wat = { workspace = true }
+
+[features]
+default = []
+# Roadmap #1: WASM contract VM via wasmtime. Selected by Palantir oversight
+# over Google X's CPython proposal — CMVP can't validate an interpreted
+# Python boundary, but wasmtime gives a clean cryptographic boundary.
+wasm = ["dep:wasmtime", "dep:blake3"]
