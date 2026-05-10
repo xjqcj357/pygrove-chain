@@ -470,7 +470,7 @@ mod tests {
             .func_wrap(
                 "env",
                 "chain_reflect_get",
-                |caller: Caller<'_, ContractCtx>,
+                |mut caller: Caller<'_, ContractCtx>,
                  key_ptr: i32,
                  key_len: i32,
                  _out_ptr: i32,
