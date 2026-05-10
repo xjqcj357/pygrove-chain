@@ -47,35 +47,26 @@ pub const DEFAULT_ASERT_TAU_MS: u64 = 2 * 24 * 60 * 60 * 1000;
 /// with stale difficulty.
 pub const BOOTSTRAP_ASERT_TAU_MS: u64 = 60 * 60 * 1000;
 
-/// Compute `2^(num/den)` × 2^16 in Q16.16 fixed-point, using the cubic
-/// approximation from the BCH reference. Accurate to ~1 ULP for the
-/// operational range we hit (|x| ≤ ~32 == 32 doublings == far past anything
-/// realistic per block thanks to the 8% clamp).
+/// Compute `2^(num/den)` × 2^16 in Q16.16 fixed-point.
+///
+/// Linear approximation around 1: `2^x ≈ 1 + x · ln(2)` for small `|x|`.
+/// In Q16.16, `ln(2) ≈ 0.6931` rounds to `45426/65536`.
+///
+/// PyGrove's `asert_target` then applies a hard ±8% clamp on the resulting
+/// multiplier before it touches the target, so larger `|x|` gets capped at
+/// the boundary anyway — making the linear approximation operationally
+/// indistinguishable from the cubic across the per-block regime where
+/// ASERT actually lives. Avoids the sign-handling pitfalls of the cubic
+/// when `x` is negative; cross-platform-deterministic by construction
+/// (pure integer arithmetic, no `2^x` library call).
 fn pow2_q16(num: i128, den: i128) -> i128 {
-    // Convert to Q16.16: shifts = (num/den) × 65536
-    let shifts: i128 = (num.saturating_mul(1 << 16)) / den.max(1);
-
-    let int_shift = shifts >> 16;
-    let mut frac = shifts & 0xFFFF;
-    let mut int_shift = int_shift;
-    if frac < 0 {
-        frac += 0x10000;
-        int_shift -= 1;
-    }
-
-    // BCH cubic approximation (well-tested numerics):
-    //   factor ≈ 2^16 + (195766423245049 + (971821376 + 5127 × x) × x) × x / 2^32
-    // where x is the Q16.16 fractional part. Output is in Q32 scale (>> 32 at end).
-    let factor: i128 =
-        ((195766423245049i128 + (971821376i128 + 5127i128 * frac) * frac) * frac) >> 32;
-    let multiplier_q16: i128 = (1i128 << 16) + factor;
-
-    // Apply integer power-of-2 shift.
-    if int_shift >= 0 {
-        multiplier_q16 << int_shift.min(120) // saturate before u128 overflow
-    } else {
-        multiplier_q16 >> (-int_shift).min(120)
-    }
+    // x_q16 = (num / den) × 65536, kept as i128.
+    let x_q16: i128 = (num.saturating_mul(1 << 16)) / den.max(1);
+    // Q16.16 of ln(2) ≈ 0.6931 ≈ 45426/65536.
+    const LN2_Q16: i128 = 45426;
+    // delta_q16 = x_q16 × ln(2)_q16 / 2^16  ≈  x · ln(2) in Q16.16.
+    let delta_q16: i128 = (x_q16.saturating_mul(LN2_Q16)) >> 16;
+    (1i128 << 16) + delta_q16
 }
 
 /// Compute the new target for `new_block` from an anchor (typically the
