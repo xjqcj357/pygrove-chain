@@ -15,12 +15,18 @@ pub use crate::address::AccountId;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SigAlgo {
+    /// Falcon-512 / FN-DSA, integer sampler. PoQC headline algorithm.
     Falcon512 = 1,
+    /// SLH-DSA-128s. Cold governance keys (`UpgradeCrypto` signer in mainnet).
     SlhDsa128s = 2,
-    /// Ed25519 — Phase-A bringup placeholder. Tag = 3 explicitly so that an
-    /// `UpgradeCrypto` event can rotate to Falcon-512 without invalidating
-    /// any signed-with-3 history. Not for mainnet.
+    /// Ed25519 — Phase A bringup placeholder. Live on testnet today; rotates
+    /// to Falcon-512 (tag = 1) via `UpgradeCrypto` in Phase B.
     Ed25519 = 3,
+    /// ML-DSA-65 (FIPS 204). Added for the Raytheon FIPS-profile build —
+    /// CMVP-validatable when the underlying primitive ships in `pqc-mldsa`.
+    /// Plumbed via `UpgradeCrypto` so a FIPS-profile chain can rotate
+    /// signature algos without forking the testnet identity.
+    MlDsa65 = 4,
 }
 
 impl SigAlgo {
@@ -29,6 +35,7 @@ impl SigAlgo {
             1 => Some(Self::Falcon512),
             2 => Some(Self::SlhDsa128s),
             3 => Some(Self::Ed25519),
+            4 => Some(Self::MlDsa65),
             _ => None,
         }
     }
@@ -63,6 +70,27 @@ pub enum TxCall {
         target_height: u64,
         sig_algo: u8,
         hash_algo: u8,
+    },
+    /// Federated-learning round attestation. Commits a hash of an aggregation
+    /// round (post-FedAvg model hash + participant set + DP budget) to a
+    /// dedicated reflect subtree. Lets a verifier in 2031 re-execute round N
+    /// of a 2027 model bit-exactly against committed inputs, with no vendor
+    /// cooperation.
+    ///
+    /// Sender pays `fee_sat` like any tx. Coordinator authority (who's
+    /// allowed to attest for `job_id`) is registered out-of-band in v0.4
+    /// (governance-key endorsed); v0.5 elects per-job authorities via stake.
+    AttestRound {
+        /// Stable identifier for the FL job — usually `blake3(program ||
+        /// dataset_id || initial_model_hash)`.
+        job_id: [u8; 32],
+        /// Monotonic round counter within the job.
+        round_id: u64,
+        /// Post-aggregation global model hash (32 bytes).
+        model_hash: [u8; 32],
+        /// Differential-privacy ε × 1000 (so `epsilon = 1.5` → `1500`).
+        /// Zero is a valid value meaning "no DP applied at this round".
+        dp_epsilon_milli: u32,
     },
 }
 
@@ -147,6 +175,18 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             h.update(&[3u8]);
             h.update(&target_height.to_le_bytes());
             h.update(&[*sig_algo, *hash_algo]);
+        }
+        TxCall::AttestRound {
+            job_id,
+            round_id,
+            model_hash,
+            dp_epsilon_milli,
+        } => {
+            h.update(&[4u8]);
+            h.update(job_id);
+            h.update(&round_id.to_le_bytes());
+            h.update(model_hash);
+            h.update(&dp_epsilon_milli.to_le_bytes());
         }
     }
 }

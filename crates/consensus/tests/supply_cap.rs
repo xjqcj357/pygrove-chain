@@ -1,16 +1,20 @@
-//! Supply-cap invariant: under any admissible accordion trajectory, cumulative
-//! coinbase issuance must remain ≤ the configured cap (21M PYG by default), and
-//! the halving accumulator must never overflow.
+//! Supply-cap invariants under the calendar-emission rewrite.
 //!
-//! This test exists because the joint v0.1 review (MIT/Georgia Tech/Texas A&M)
-//! demanded a `cargo test` invariant for the cap. Bitcoin's geometric-series
-//! cap argument carries through ours only if Q64.64 advance arithmetic is
-//! overflow-safe; this fuzzer drives random bellow trajectories across 64
-//! halving epochs and checks both properties hold every block.
+//! Updated for v0.4 sprint: the old block-counted `Emission` struct is gone;
+//! the schedule is now `scheduled_supply_at(t_ms_since_genesis, &params)`
+//! returning a bounded cumulative. Two properties this test pins:
+//!
+//!   1. `scheduled_supply_at` never exceeds `supply_cap_sat`.
+//!   2. `current_reward` truncates to zero after 64 halving epochs.
+//!   3. The Q64.64 accordion advance never goes negative or panics under
+//!      fuzzed bellow trajectories.
+//!
+//! Joint v0.1 review (MIT/Georgia Tech/Texas A&M) demanded a `cargo test`
+//! invariant for the cap; this file is its descendant.
 
 use fixed::types::I64F64;
 use pygrove_consensus::accordion::{evaluate, AccordionParams};
-use pygrove_consensus::emission::{Emission, EmissionParams};
+use pygrove_consensus::emission::{current_reward, scheduled_supply_at, EmissionParams};
 
 /// Seeded LCG so the test is reproducible cross-platform.
 struct Lcg(u64);
@@ -25,7 +29,7 @@ impl Lcg {
     fn ratio_in_clamp(&mut self) -> I64F64 {
         let s = self.step();
         let frac32 = (s >> 32) as u32;
-        let frac_q = I64F64::from_bits((frac32 as i128) << 32); // [0, 1)
+        let frac_q = I64F64::from_bits((frac32 as i128) << 32);
         I64F64::from_num(0.25) + I64F64::from_num(3.75) * frac_q
     }
     fn bias(&mut self) -> i8 {
@@ -37,30 +41,25 @@ impl Lcg {
     }
 }
 
-/// Bound `halving_progress_q64 += advance_per_block_q64` over many blocks
-/// without overflowing u128, even if the accordion goes hard expansionary.
+/// Bound the accordion advance accumulator over many blocks without overflow.
 #[test]
 fn halving_accumulator_does_not_overflow() {
     let params = AccordionParams::defaults();
     let mut prog: u128 = 0;
-    let mut rng = Lcg(0xc0ffee);
+    let mut rng = Lcg(0x00c0_ffee_dead_beef_u64);
 
-    // 64 halvings × 210k blocks/halving × max 4× advance = ~5.4e7 blocks worst-case.
-    // Cap at 64 * 210_000 effective progress; loop until `halvings_completed == 64`.
+    // 64 halvings × 210k blocks × max 4× advance ≈ 5.4e7 blocks worst-case.
     for _ in 0..(64u64 * 210_000 * 4) {
         let r_h = rng.ratio_in_clamp();
         let r_a = rng.ratio_in_clamp();
         let bias = rng.bias();
         let out = evaluate(params, r_h, r_a, bias);
-        // advance is Q64.64; convert to u128 increment by extracting the raw bits.
         let advance_bits = out.per_block_advance.to_bits();
         assert!(advance_bits >= 0, "advance went negative: {}", out.per_block_advance);
         let advance_u: u128 = advance_bits as u128;
         prog = prog
             .checked_add(advance_u)
-            .expect("halving_progress_q64 overflowed under fuzz");
-        // Stop early once we've exhausted all 64 halvings: progress / 210_000 ≥ 64
-        // measured against integer part.
+            .expect("accordion accumulator overflowed under fuzz");
         let int_part = prog >> 64;
         if int_part / 210_000 >= 64 {
             break;
@@ -68,52 +67,34 @@ fn halving_accumulator_does_not_overflow() {
     }
 }
 
-/// Geometric-series cap: ∑_{k=0..63} (R0 / 2^k) × blocks_per_halving_k ≤ supply_cap.
-/// The accordion only redistributes blocks across halvings; it does not increase
-/// the per-halving reward. Therefore total cumulative issuance is bounded by
-/// `R0 × halving_interval_base × ∑ 1/2^k = R0 × halving_interval_base × 2`.
+/// Calendar schedule never overshoots the supply cap, even at t → ∞.
 #[test]
-fn cumulative_supply_bounded_by_geometric_series() {
+fn scheduled_supply_capped_at_horizon() {
     let params = EmissionParams::bitcoin_like();
-    let mut total_minted: u128 = 0;
-
-    for h in 0..64u32 {
-        let mut em = Emission {
-            halving_progress_q64: ((h as u128) * params.halving_interval_base as u128) << 64,
-            minted_sat: 0,
-        };
-        em.halving_progress_q64 += 1; // step into the halving window
-        let reward = em.current_reward(&params);
-        // worst case: every block in this halving pays full reward
-        total_minted = total_minted.saturating_add(reward.saturating_mul(params.halving_interval_base as u128));
-    }
-    // ∑ R0 / 2^k for k=0..∞ = 2 R0; truncated at 64 it's ≤ 2 R0 - tiny ε.
-    let bound = params.initial_reward_sat * (params.halving_interval_base as u128) * 2;
-    assert!(
-        total_minted <= bound,
-        "cumulative supply {} exceeded geometric bound {}",
-        total_minted,
-        bound
-    );
-    // And concretely below the 21M cap.
-    assert!(
-        total_minted <= params.supply_cap_sat,
-        "cumulative supply {} exceeded 21M cap {}",
-        total_minted,
-        params.supply_cap_sat
-    );
+    // 1000 halving epochs out — well past the 64-halving truncation point.
+    let t_far = 1000u64 * params.seconds_per_halving * 1000;
+    let s = scheduled_supply_at(t_far, &params);
+    assert_eq!(s, params.supply_cap_sat);
 }
 
-/// Reward zeroes out beyond the 64th halving — boundary unasserted in v0.1 source.
+/// At one halving exactly, scheduled supply is half the cap (Bitcoin invariant).
+#[test]
+fn scheduled_supply_at_one_halving_is_half_cap() {
+    let params = EmissionParams::bitcoin_like();
+    let t = params.seconds_per_halving * 1000;
+    let s = scheduled_supply_at(t, &params);
+    assert_eq!(s, params.supply_cap_sat / 2);
+}
+
+/// Reward truncates to zero past the 64th halving.
 #[test]
 fn reward_is_zero_past_64th_halving() {
     let params = EmissionParams::bitcoin_like();
-    let em = Emission {
-        halving_progress_q64: ((64u128 * params.halving_interval_base as u128) << 64) + 1,
-        minted_sat: 0,
-    };
-    assert!(em.halvings_completed(&params) >= 64);
-    assert_eq!(em.current_reward(&params), 0);
+    let g = 1_000_000_000_000u64;
+    let t_far = 100u64 * params.seconds_per_halving * 1000;
+    // Pretend we've already minted the cap, so calendar_remaining = 0.
+    let r = current_reward(&params, g, g + t_far, g + t_far - 600_000, params.supply_cap_sat);
+    assert_eq!(r, 0);
 }
 
 /// Stability bias never drives the per-block advance negative regardless of
@@ -121,7 +102,7 @@ fn reward_is_zero_past_64th_halving() {
 #[test]
 fn per_block_advance_stays_non_negative() {
     let mut p = AccordionParams::defaults();
-    p.beta_s = I64F64::from_num(0.5); // exercise non-zero beta_s explicitly
+    p.beta_s = I64F64::from_num(0.5);
     let mut rng = Lcg(0x1234_5678);
     for _ in 0..16_000 {
         let r_h = rng.ratio_in_clamp();

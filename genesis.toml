@@ -1,35 +1,41 @@
-# PyGrove Chain — TESTNET genesis
+# PyGrove Chain — TESTNET-3 genesis
 #
-# Fair-launch ceremony:
+# Fair-launch ceremony (unchanged from testnet-2):
 #   - genesis_time_ms is a future, publicly-announced wall-clock time.
-#   - The genesis block is initialized at deploy with that timestamp baked in.
 #   - The node refuses any block submission while now() < genesis_time_ms.
 #   - Block 1 must have timestamp >= parent.timestamp_ms (= genesis_time_ms).
 #   - The genesis coinbase carries genesis_headline_hex — a Bitcoin block hash
-#     mined before our deploy. Anyone can verify the BTC hash didn't exist
-#     before its own block timestamp, which proves our genesis cannot have
-#     been mined before then. Bitcoin's "Chancellor" trick.
+#     mined before our deploy, as proof-of-no-prior-knowledge.
 #
-# To verify the headline yourself:
-#   curl https://blockstream.info/api/block/<genesis_headline_hex> | jq
-#
-# Reproducing the genesis hash from this exact file gives the canonical
-# testnet identity. A different genesis.toml = a different chain.
+# What's new in testnet-3:
+#   - **Calendar-driven emission.** Per-block reward is no longer a constant;
+#     it's a delta against `scheduled_supply_at(timestamp)`, capped per-block.
+#     Fixes the testnet-2 inflation bug (economic loop running faster than
+#     security loop). See `crates/consensus/src/emission.rs`.
+#   - `seconds_per_halving` field added (was implicit at 4 years).
+#   - Same `pyg1...` addresses as testnet-2 — keys port forward unchanged.
 
-chain_id                = "pygrove-testnet-2"
-genesis_time_ms         = 1778371200000        # 2026-05-10 00:00:00 UTC
-genesis_headline_hex    = "00000000000000000001b62fbb2361bb622e8b767db52961d700cb0ad352304e"
-# ^ Bitcoin block 948515, mined 2026-05-08 22:23:16 UTC. Embedded into the
-#   genesis coinbase slot as proof-of-no-prior-knowledge. testnet-2 incorporates
-#   real send/receive (Phase A: Ed25519); testnet-1 retired pre-launch.
+chain_id                = "pygrove-testnet-3"
+genesis_time_ms         = 1778382000000        # 2026-05-10 03:00:00 UTC
+genesis_headline_hex    = "00000000000000000001e971a5490ac3ccd5c35f358196a06095214230185d10"
+# ^ Bitcoin block 948704. Embedded into the genesis coinbase slot as
+#   proof-of-no-prior-knowledge for the testnet-3 fair-launch ceremony.
 
-# Bitcoin-curve skeleton — testnet uses easier bits so a laptop can mine the
-# first few blocks. v0.2 testnet ramps closer to 10-min target.
+# Bitcoin-curve skeleton — same as testnet-2 (laptop-mineable initial bits).
 initial_bits            = 0x1f00ffff
 target_block_time_ms    = 600000
 retarget_interval       = 2016
 halving_interval_base   = 210000
+seconds_per_halving     = 126000000        # 4 years exactly @ 10-min target × 210000 blocks
 initial_reward_sat      = 5000000000      # 50 * 10^8
+
+# v0.4 operator-safety constraints (per-block ASERT + clamps + slew + bootstrap).
+asert_tau_ms                       = 172800000   # 2 days, default ASERT half-life
+bootstrap_asert_tau_ms             = 3600000     # 1 hour, tighter τ during discovery
+bootstrap_height                   = 2016        # below this: capped rewards + tight ASERT
+bootstrap_reward_pct               = 50          # bootstrap-mode caps reward at 50% of epoch reward
+max_reward_pct_change_per_block    = 25          # slew-rate limit on emission delta
+max_bits_pct_change_per_block      = 8           # hard ±8% clamp on per-block ASERT change
 
 # Accordion params
 accordion_epsilon       = 0.05

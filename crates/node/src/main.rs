@@ -140,18 +140,54 @@ fn cmd_run(
     // Reconstruct in-memory state by replaying every block from the chain log
     // through apply_block. v0.2 swaps to GroveDB persistence so this O(N)
     // startup cost goes away.
+    //
+    // Calendar-emission accounting: per-block reward is computed via
+    // `emission::current_reward(...)`, anchored at `genesis_time_ms`, with
+    // `minted_so_far` tracked across the replay. Genesis (height 0) earns 0;
+    // each subsequent block earns the delta between scheduled supply at its
+    // timestamp and what's already been minted, capped per-block.
     let blocks = store.load_all()?;
     let block_reward_sat: u128 = g.initial_reward_sat as u128;
+    let emission_params = pygrove_consensus::emission::EmissionParams {
+        initial_reward_sat: block_reward_sat,
+        seconds_per_halving: g.seconds_per_halving,
+        target_block_time_ms: g.target_block_time_ms,
+        supply_cap_sat: 21_000_000 * 100_000_000,
+        max_reward_pct_change_per_block: g.max_reward_pct_change_per_block,
+        bootstrap_height: g.bootstrap_height,
+        bootstrap_reward_pct: g.bootstrap_reward_pct,
+    };
     let mut mem = MemState::new();
+    let mut minted_so_far: u128 = 0;
+    let mut prev_reward: Option<u128> = None;
     for b in &blocks {
-        let reward = if b.header.height == 0 { 0 } else { block_reward_sat };
+        let parent_ts = if b.header.height == 0 {
+            g.genesis_time_ms
+        } else {
+            blocks
+                .get((b.header.height - 1) as usize)
+                .map(|p| p.header.timestamp_ms)
+                .unwrap_or(g.genesis_time_ms)
+        };
+        let reward = pygrove_consensus::emission::current_reward_with_height(
+            &emission_params,
+            g.genesis_time_ms,
+            b.header.timestamp_ms,
+            parent_ts,
+            minted_so_far,
+            b.header.height,
+            prev_reward,
+        );
         pygrove_state::apply_block(&mut mem, b, reward)
             .map_err(|e| anyhow::anyhow!("replay height {}: {e}", b.header.height))?;
+        minted_so_far = minted_so_far.saturating_add(reward);
+        prev_reward = Some(reward);
     }
     tracing::info!(
         replayed = blocks.len(),
-        reward_sat = block_reward_sat,
-        "state replayed; entering live mode"
+        minted_so_far_sat = %minted_so_far,
+        seconds_per_halving = g.seconds_per_halving,
+        "state replayed; entering live mode (calendar emission)"
     );
 
     // Optional treasury address — env override sets where the throttled
@@ -189,6 +225,9 @@ fn cmd_run(
         block_reward_sat,
         target_block_time_ms: g.target_block_time_ms,
         halving_interval_base: g.halving_interval_base,
+        emission: emission_params,
+        minted_so_far: Mutex::new(minted_so_far),
+        prev_reward_sat: Mutex::new(prev_reward),
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
