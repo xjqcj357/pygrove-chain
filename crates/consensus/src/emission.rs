@@ -29,16 +29,33 @@ pub struct EmissionParams {
     pub seconds_per_halving: u64,
     pub target_block_time_ms: u64,
     pub supply_cap_sat: u128,
+    /// Maximum percent change in per-block reward across consecutive blocks.
+    /// Slew-rate limit on emission. Without this, exiting/entering a stall
+    /// window can step rewards abruptly. Default 25%.
+    pub max_reward_pct_change_per_block: u32,
+    /// Below this height the chain runs in bootstrap mode: aggressive
+    /// difficulty tracking via shorter ASERT τ, capped reward fraction,
+    /// and reflection / accordion bellows are sourced from defaults
+    /// rather than computed from short noisy windows.
+    pub bootstrap_height: u64,
+    /// During bootstrap, per-block reward is additionally capped at
+    /// `bootstrap_reward_pct × epoch_reward / 100`. Default 50%.
+    pub bootstrap_reward_pct: u32,
 }
 
 impl EmissionParams {
     /// Bitcoin-style defaults: 50 PYG, 4-year halving, 10-min target, 21M cap.
+    /// Slew-rate + bootstrap defaults are conservative — operators can soften
+    /// per-deployment via genesis.toml.
     pub fn bitcoin_like() -> Self {
         Self {
             initial_reward_sat: 5_000_000_000,
-            seconds_per_halving: 210_000 * 600, // 4 years exactly under target cadence
+            seconds_per_halving: 210_000 * 600,
             target_block_time_ms: 600_000,
             supply_cap_sat: 21_000_000 * 100_000_000,
+            max_reward_pct_change_per_block: 25,
+            bootstrap_height: 2016,
+            bootstrap_reward_pct: 50,
         }
     }
 }
@@ -103,6 +120,42 @@ pub fn current_reward(
     parent_timestamp_ms: u64,
     minted_so_far_sat: u128,
 ) -> u128 {
+    current_reward_with_height(
+        p,
+        genesis_time_ms,
+        block_timestamp_ms,
+        parent_timestamp_ms,
+        minted_so_far_sat,
+        u64::MAX, // height unknown → assume past bootstrap
+        None,     // no prev reward → no slew check
+    )
+}
+
+/// Bootstrap-mode + slew-rate-aware reward calculation. New consensus path
+/// for v0.4-sprint. Adds two operator-safety layers on top of the calendar
+/// math:
+///
+/// 1. **Bootstrap mode** (`height < bootstrap_height`): cap per-block reward
+///    at `bootstrap_reward_pct × epoch_reward / 100`. Even if the schedule
+///    + proportional caps would allow more, the chain is still doing
+///    difficulty discovery — the launch operator should not get full
+///    rewards until the network has stabilized.
+///
+/// 2. **Slew-rate limit**: change in per-block reward across consecutive
+///    blocks is bounded by `max_reward_pct_change_per_block`. Even if the
+///    calendar's `scheduled_supply` curve discontinuously jumps (e.g.
+///    after a long stall), the actually-paid reward smoothly catches up
+///    block-by-block. Both `prev_reward` arguments may be `None` (genesis
+///    + first replay step) — the slew check is skipped in that case.
+pub fn current_reward_with_height(
+    p: &EmissionParams,
+    genesis_time_ms: u64,
+    block_timestamp_ms: u64,
+    parent_timestamp_ms: u64,
+    minted_so_far_sat: u128,
+    block_height: u64,
+    prev_block_reward: Option<u128>,
+) -> u128 {
     if block_timestamp_ms <= genesis_time_ms {
         return 0;
     }
@@ -118,16 +171,32 @@ pub fn current_reward(
         p.initial_reward_sat >> (epoch_u128 as u32)
     };
 
-    // Stall-attack mitigation. If parent is in the future (clock-skew weirdness)
-    // or at the same instant, treat elapsed as one target interval — a block
-    // can always earn its nominal share.
     let elapsed_ms = block_timestamp_ms.saturating_sub(parent_timestamp_ms);
     let elapsed_for_cap = elapsed_ms.max(1) as u128;
     let proportional_cap = epoch_reward
         .saturating_mul(elapsed_for_cap)
         / (p.target_block_time_ms as u128).max(1);
 
-    calendar_remaining.min(epoch_reward).min(proportional_cap)
+    let mut reward = calendar_remaining.min(epoch_reward).min(proportional_cap);
+
+    // Bootstrap mode: hard cap at bootstrap_reward_pct of epoch_reward.
+    if block_height < p.bootstrap_height {
+        let bootstrap_cap = epoch_reward.saturating_mul(p.bootstrap_reward_pct as u128) / 100;
+        reward = reward.min(bootstrap_cap);
+    }
+
+    // Slew-rate limit: bound change relative to previous block's reward.
+    // Skip if prev is unknown (genesis edge) or zero (first paid block bootstrap).
+    if let Some(prev) = prev_block_reward {
+        if prev > 0 {
+            let pct = p.max_reward_pct_change_per_block.max(1) as u128;
+            let max_up = prev.saturating_mul(100 + pct) / 100;
+            let max_down = prev.saturating_mul(100u128.saturating_sub(pct)) / 100;
+            reward = reward.clamp(max_down, max_up);
+        }
+    }
+
+    reward
 }
 
 #[cfg(test)]
@@ -191,11 +260,17 @@ mod tests {
     fn fast_blocks_get_proportionally_smaller_reward() {
         let p = p();
         let g = 1_000_000_000_000u64;
-        // 100 blocks in 6 seconds (way faster than target). Nothing minted yet.
-        // Elapsed since parent = 60ms. Proportional cap = R0 × 60 / 600000 = R0 / 10000.
-        let r = current_reward(&p, g, g + 60, g, 0);
-        let expected_cap = p.initial_reward_sat / 10000;
-        assert_eq!(r, expected_cap);
+        // Set the test late enough in the schedule that calendar_remaining
+        // is large; then a fast block (60ms after parent) hits the
+        // proportional cap, not the calendar bound.
+        // Block ts = 1 hour past genesis, parent = 60ms before.
+        let one_hour_ms = 3_600_000;
+        let block_ts = g + one_hour_ms;
+        let parent_ts = block_ts - 60;
+        // minted_so_far = 0 → calendar_remaining = scheduled at 1h ≈ 6 × R0
+        let r = current_reward(&p, g, block_ts, parent_ts, 0);
+        let expected_prop_cap = p.initial_reward_sat / 10000;
+        assert_eq!(r, expected_prop_cap);
     }
 
     #[test]

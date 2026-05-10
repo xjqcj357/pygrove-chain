@@ -1,6 +1,7 @@
 //! Consensus: PoW seal, Bitcoin retarget, the Accordion, the Reflection, emission schedule.
 
 pub mod accordion;
+pub mod asert;
 pub mod emission;
 pub mod pow;
 pub mod reflection;

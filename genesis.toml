@@ -29,6 +29,14 @@ halving_interval_base   = 210000
 seconds_per_halving     = 126000000        # 4 years exactly @ 10-min target × 210000 blocks
 initial_reward_sat      = 5000000000      # 50 * 10^8
 
+# v0.4 operator-safety constraints (per-block ASERT + clamps + slew + bootstrap).
+asert_tau_ms                       = 172800000   # 2 days, default ASERT half-life
+bootstrap_asert_tau_ms             = 3600000     # 1 hour, tighter τ during discovery
+bootstrap_height                   = 2016        # below this: capped rewards + tight ASERT
+bootstrap_reward_pct               = 50          # bootstrap-mode caps reward at 50% of epoch reward
+max_reward_pct_change_per_block    = 25          # slew-rate limit on emission delta
+max_bits_pct_change_per_block      = 8           # hard ±8% clamp on per-block ASERT change
+
 # Accordion params
 accordion_epsilon       = 0.05
 accordion_beta_h        = 0.5             # mining bellow

@@ -57,6 +57,11 @@ pub struct NodeState {
     /// on each successful `try_apply_block`. Used as input to the next
     /// block's reward computation.
     pub minted_so_far: Mutex<u128>,
+    /// Last applied block's reward (sat). Used by the slew-rate limiter so
+    /// per-block emission cannot change by more than
+    /// `emission.max_reward_pct_change_per_block` percent across consecutive
+    /// blocks. `None` until the first non-genesis block lands.
+    pub prev_reward_sat: Mutex<Option<u128>>,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -536,23 +541,27 @@ fn emission_series(
         });
     }
     // Replay calendar rewards over the entire chain to get correct cumulative
-    // values. For testnet scale this is fine; v0.2 caches per-height running
-    // totals in chainstore.
+    // values, with the same bootstrap-cap + slew-rate path the live node
+    // applies, so the chart matches what's actually on-chain.
     let mut cumulative_by_height: std::collections::HashMap<u64, u128> =
         std::collections::HashMap::new();
     let mut running: u128 = 0;
-    cumulative_by_height.insert(0, 0); // genesis pays 0
+    let mut prev_reward: Option<u128> = None;
+    cumulative_by_height.insert(0, 0);
     for i in 1..all.len() {
         let b = &all[i];
         let parent_ts = all[i - 1].header.timestamp_ms;
-        let reward = pygrove_consensus::emission::current_reward(
+        let reward = pygrove_consensus::emission::current_reward_with_height(
             &st.emission,
             st.genesis_time_ms,
             b.header.timestamp_ms,
             parent_ts,
             running,
+            b.header.height,
+            prev_reward,
         );
         running = running.saturating_add(reward);
+        prev_reward = Some(reward);
         cumulative_by_height.insert(b.header.height, running);
     }
     // Stride so we return ~`points` samples evenly across the window.
@@ -916,20 +925,24 @@ pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
         None => st.genesis_time_ms,
     };
     let minted = *st.minted_so_far.lock().unwrap();
-    let reward = pygrove_consensus::emission::current_reward(
+    let prev_reward = *st.prev_reward_sat.lock().unwrap();
+    let reward = pygrove_consensus::emission::current_reward_with_height(
         &st.emission,
         st.genesis_time_ms,
         hdr.timestamp_ms,
         parent_ts,
         minted,
+        hdr.height,
+        prev_reward,
     );
     let mut state = st.state.lock().unwrap();
     let out = pygrove_state::apply_block(&mut *state, block, reward)
         .map_err(|e| anyhow::anyhow!("apply_block: {e}"))?;
     drop(state);
-    // Track cumulative emission. Order matters: only after apply_block
-    // returns Ok do we credit the cumulative counter.
+    // Track cumulative emission + last-block reward. Order matters: only
+    // after apply_block returns Ok do we credit the counters.
     *st.minted_so_far.lock().unwrap() = minted.saturating_add(reward);
+    *st.prev_reward_sat.lock().unwrap() = Some(reward);
     // 7. Drop confirmed txs from the mempool. Computed *after* apply because
     //    apply uses tx_body_hash, and only after success do we want to evict.
     let confirmed: Vec<[u8; 32]> = block.body.txs.iter().map(|t| t.body_hash()).collect();

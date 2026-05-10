@@ -153,30 +153,35 @@ fn cmd_run(
         seconds_per_halving: g.seconds_per_halving,
         target_block_time_ms: g.target_block_time_ms,
         supply_cap_sat: 21_000_000 * 100_000_000,
+        max_reward_pct_change_per_block: g.max_reward_pct_change_per_block,
+        bootstrap_height: g.bootstrap_height,
+        bootstrap_reward_pct: g.bootstrap_reward_pct,
     };
     let mut mem = MemState::new();
     let mut minted_so_far: u128 = 0;
+    let mut prev_reward: Option<u128> = None;
     for b in &blocks {
         let parent_ts = if b.header.height == 0 {
             g.genesis_time_ms
         } else {
-            // Defensive lookup; for v0.1 chain logs the parent is always the
-            // immediately preceding block in load_all order.
             blocks
                 .get((b.header.height - 1) as usize)
                 .map(|p| p.header.timestamp_ms)
                 .unwrap_or(g.genesis_time_ms)
         };
-        let reward = pygrove_consensus::emission::current_reward(
+        let reward = pygrove_consensus::emission::current_reward_with_height(
             &emission_params,
             g.genesis_time_ms,
             b.header.timestamp_ms,
             parent_ts,
             minted_so_far,
+            b.header.height,
+            prev_reward,
         );
         pygrove_state::apply_block(&mut mem, b, reward)
             .map_err(|e| anyhow::anyhow!("replay height {}: {e}", b.header.height))?;
         minted_so_far = minted_so_far.saturating_add(reward);
+        prev_reward = Some(reward);
     }
     tracing::info!(
         replayed = blocks.len(),
@@ -222,6 +227,7 @@ fn cmd_run(
         halving_interval_base: g.halving_interval_base,
         emission: emission_params,
         minted_so_far: Mutex::new(minted_so_far),
+        prev_reward_sat: Mutex::new(prev_reward),
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
