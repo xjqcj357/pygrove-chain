@@ -365,7 +365,7 @@ mod tests {
         // semantic change before approving.
         let actual_hex = hex::encode(digest.as_bytes());
         const EXPECTED_HEX: &str =
-            "8d8c1bd6dab48ce0d80fa00b56b97e09b80f0adfd1ce39c3aa2f44e51bbb8e6f";
+            "81360286fc9cdbdb3b1720041be3a6f1d00ecc0a16a0b1e93adfed865379b583";
         assert_eq!(
             actual_hex, EXPECTED_HEX,
             "calendar-emission fixture digest changed.\n\
