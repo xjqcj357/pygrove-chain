@@ -44,6 +44,9 @@ pub struct NodeState {
     /// Per-block coinbase reward in satoshi. Constant in Phase A; the accordion
     /// + halving schedule kick in once we have retargets working.
     pub block_reward_sat: u128,
+    /// Bitcoin's 10-minute target. Used to compute the "planned" emission
+    /// curve the explorer / info page draws against the actual one.
+    pub target_block_time_ms: u64,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -235,6 +238,41 @@ struct SubmitTxResp {
     tx_hash: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct EmissionSeriesReq {
+    /// Time horizon to sample, in seconds. The server returns points covering
+    /// `[tip_timestamp - window_seconds, tip_timestamp]`.
+    window_seconds: u64,
+    /// Approximate number of samples to return (sparsely sampled if the window
+    /// contains more blocks than this). Hard cap at 500.
+    #[serde(default = "default_emission_points")]
+    points: usize,
+}
+fn default_emission_points() -> usize {
+    240
+}
+
+#[derive(Debug, Serialize)]
+struct EmissionPoint {
+    height: u64,
+    timestamp_ms: u64,
+    /// Cumulative supply minted up to and including this block, in sat.
+    minted_sat: u128,
+}
+
+#[derive(Debug, Serialize)]
+struct EmissionSeriesResp {
+    /// Samples newest-last so the chart can append directly.
+    samples: Vec<EmissionPoint>,
+    /// Wall-clock timestamp of the genesis block — anchor for the planned curve.
+    genesis_time_ms: u64,
+    /// Current per-block reward (constant for v0.1 testnet; varies post-halving).
+    block_reward_sat: u128,
+    /// Mainnet target block time (`target_block_time_ms` from genesis.toml).
+    /// The "planned" curve is `floor((t - genesis_time_ms) / target_block_time_ms) * block_reward_sat`.
+    target_block_time_ms: u64,
+}
+
 /// Mobile / browser wallet path. Same effect as `submit_tx` but the wallet
 /// only needs ed25519 + blake3 + bech32 client-side — the server handles
 /// CBOR. The wallet computes `signing_hash` itself, so the server can't
@@ -414,6 +452,13 @@ fn dispatch(rpc: RpcReq, st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
                 },
             },
         ),
+        "emission_series" => match serde_json::from_value::<EmissionSeriesReq>(rpc.params) {
+            Ok(req) => match emission_series(st, req) {
+                Ok(v) => json_ok(200, &RpcOk { result: v }),
+                Err(e) => json_err(500, &e.to_string()),
+            },
+            Err(e) => json_err(400, &format!("bad params: {e}")),
+        },
         m => json_err(400, &format!("unknown method: {m}")),
     }
 }
@@ -440,6 +485,71 @@ fn submit_tx(st: &NodeState, req: SubmitTxReq) -> anyhow::Result<SubmitTxResp> {
 
 fn parse_address(s: &str) -> anyhow::Result<AccountId> {
     AccountId::from_bech32(s).map_err(|e| anyhow::anyhow!("address: {e}"))
+}
+
+fn emission_series(
+    st: &NodeState,
+    req: EmissionSeriesReq,
+) -> anyhow::Result<EmissionSeriesResp> {
+    let points = req.points.clamp(2, 500);
+    let all = st.store.load_all()?;
+    if all.is_empty() {
+        return Ok(EmissionSeriesResp {
+            samples: vec![],
+            genesis_time_ms: st.genesis_time_ms,
+            block_reward_sat: st.block_reward_sat,
+            target_block_time_ms: st.target_block_time_ms,
+        });
+    }
+    // Anchor at the latest block in the chain log so the chart's right edge
+    // is always "now according to the chain", not wall-clock.
+    let tip_ts = all.last().unwrap().header.timestamp_ms;
+    let cutoff_ms = tip_ts.saturating_sub(req.window_seconds.saturating_mul(1000));
+    let in_window: Vec<_> = all
+        .iter()
+        .filter(|b| b.header.timestamp_ms >= cutoff_ms)
+        .collect();
+    if in_window.is_empty() {
+        return Ok(EmissionSeriesResp {
+            samples: vec![],
+            genesis_time_ms: st.genesis_time_ms,
+            block_reward_sat: st.block_reward_sat,
+            target_block_time_ms: st.target_block_time_ms,
+        });
+    }
+    // Stride so we return ~`points` samples evenly across the window.
+    let stride = (in_window.len() / points).max(1);
+    let mut samples = Vec::with_capacity(points + 2);
+    for (i, b) in in_window.iter().enumerate() {
+        if i % stride == 0 {
+            // Phase A pre-halving: minted = height × reward (genesis pays 0).
+            // Post-halving accounting lives in the reflect subtree; for now
+            // the simple formula holds for testnet-2's early period.
+            let minted = (b.header.height as u128) * st.block_reward_sat;
+            samples.push(EmissionPoint {
+                height: b.header.height,
+                timestamp_ms: b.header.timestamp_ms,
+                minted_sat: minted,
+            });
+        }
+    }
+    // Always include the most recent block so the chart's right edge is
+    // exact, not stride-rounded.
+    let last = in_window.last().unwrap();
+    let last_h = last.header.height;
+    if samples.last().map(|s| s.height) != Some(last_h) {
+        samples.push(EmissionPoint {
+            height: last_h,
+            timestamp_ms: last.header.timestamp_ms,
+            minted_sat: (last_h as u128) * st.block_reward_sat,
+        });
+    }
+    Ok(EmissionSeriesResp {
+        samples,
+        genesis_time_ms: st.genesis_time_ms,
+        block_reward_sat: st.block_reward_sat,
+        target_block_time_ms: st.target_block_time_ms,
+    })
 }
 
 fn submit_transfer(st: &NodeState, req: SubmitTransferReq) -> anyhow::Result<SubmitTxResp> {

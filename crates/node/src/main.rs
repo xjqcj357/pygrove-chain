@@ -187,6 +187,7 @@ fn cmd_run(
         state: Mutex::new(mem),
         mempool: Arc::new(Mempool::new(10_000)),
         block_reward_sat,
+        target_block_time_ms: g.target_block_time_ms,
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
