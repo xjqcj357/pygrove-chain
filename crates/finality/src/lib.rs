@@ -86,7 +86,7 @@ impl Committee {
         if self.epoch_blocks == 0 {
             return None;
         }
-        if height % self.epoch_blocks == 0 && height > 0 {
+        if height > 0 && height.is_multiple_of(self.epoch_blocks) {
             Some(height / self.epoch_blocks)
         } else {
             None
