@@ -26,10 +26,15 @@
 //!   that target non-FIPS algorithms on a FIPS-profile node.
 
 // Ed25519 size constants — RFC 8032 fixes these forever, so we keep them as
-// local consts (always in scope) instead of pulling them through the
-// ed25519-dalek import (which is cfg-gated to non-FIPS builds).
-const ED_SK_LEN: usize = 32; // ed25519_dalek::SECRET_KEY_LENGTH
+// local consts instead of pulling them through the ed25519-dalek import
+// (which is cfg-gated to non-FIPS builds).
+//
+// `ED_SIG_LEN` is needed unconditionally because `sizes()` reports it for
+// algo=3 in both build profiles. `ED_SK_LEN` is only consumed by
+// `ed25519_sign`, which is itself non-FIPS only.
 const ED_SIG_LEN: usize = 64; // ed25519_dalek::SIGNATURE_LENGTH
+#[cfg(not(feature = "fips"))]
+const ED_SK_LEN: usize = 32; // ed25519_dalek::SECRET_KEY_LENGTH
 
 #[cfg(not(feature = "fips"))]
 use ed25519_dalek::{

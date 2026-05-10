@@ -44,6 +44,46 @@ pub struct PendingCryptoUpgrade {
     pub announced_at_height: u64,
 }
 
+/// Coordinator-authority registry for an FL `job_id`. Once committed via a
+/// `RegisterAttestCoordinator` tx, subsequent `AttestRound` txs for the
+/// same `job_id` must come from one of the listed accounts. Stored under
+/// `Subtree::Meta` at key `[ATTEST_AUTH_KEY_PREFIX || job_id]` (CBOR-encoded).
+///
+/// Roadmap #6: this is the v0.4 wedge — the registry exists, AttestRound
+/// validates against it. In v0.5 the registration tx itself requires a
+/// 2-of-3 SLH-DSA governance threshold sig (today: stub, like
+/// UpgradeCrypto).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CoordinatorAuthority {
+    pub job_id: [u8; 32],
+    pub coordinators: Vec<[u8; 20]>,
+    pub registered_at_height: u64,
+}
+
+/// Key prefix for coordinator-authority records in `Subtree::Meta`.
+/// Full key: `[ATTEST_AUTH_KEY_PREFIX || job_id]` (5 + 32 = 37 bytes).
+pub const ATTEST_AUTH_KEY_PREFIX: &[u8] = b"attau";
+
+/// Build the `Subtree::Meta` storage key for a job's coordinator authority.
+pub fn attest_auth_key(job_id: &[u8; 32]) -> [u8; 37] {
+    let mut key = [0u8; 37];
+    key[..5].copy_from_slice(ATTEST_AUTH_KEY_PREFIX);
+    key[5..].copy_from_slice(job_id);
+    key
+}
+
+/// Load the coordinator-authority registry for `job_id`, or `None` if no
+/// registry has been published for that job (in which case `AttestRound`
+/// is open to any attester, the testnet default).
+pub fn load_attest_authority(
+    store: &dyn StateStore,
+    job_id: &[u8; 32],
+) -> Option<CoordinatorAuthority> {
+    let key = attest_auth_key(job_id);
+    let bytes = store.get(Subtree::Meta, &key)?;
+    ciborium::de::from_reader(&bytes[..]).ok()
+}
+
 #[derive(Debug, Error)]
 pub enum ApplyError {
     #[error("tx[{0}]: missing witness — body and witnesses must be parallel")]
@@ -82,6 +122,10 @@ pub enum ApplyError {
     UpgradeSigAlgoNotAllowed { idx: usize, sig_algo: u8 },
     #[error("tx[{idx}]: UpgradeCrypto target hash_algo {hash_algo} not in this build's allowlist")]
     UpgradeHashAlgoNotAllowed { idx: usize, hash_algo: u8 },
+    #[error(
+        "tx[{idx}]: AttestRound from account not in coordinator authority registry for job_id"
+    )]
+    AttestCoordinatorNotAuthorized { idx: usize },
     #[error("coinbase reward overflow")]
     CoinbaseOverflow,
 }
@@ -176,6 +220,16 @@ pub fn apply_block(
                 model_hash,
                 dp_epsilon_milli,
             } => {
+                // Roadmap #6: if a coordinator-authority registry exists
+                // for this job_id, the tx's from_account must be in it.
+                // Jobs without a registry are open (testnet default).
+                if let Some(authority) = load_attest_authority(store, job_id) {
+                    if !authority.coordinators.is_empty()
+                        && !authority.coordinators.contains(&tx.from_account.0)
+                    {
+                        return Err(ApplyError::AttestCoordinatorNotAuthorized { idx: i });
+                    }
+                }
                 let rec = AttestRecord {
                     job_id: *job_id,
                     round_id: *round_id,
@@ -193,6 +247,24 @@ pub fn apply_block(
                 key[..32].copy_from_slice(job_id);
                 key[32..].copy_from_slice(&round_id.to_be_bytes());
                 store.put(Subtree::Attest, &key, &buf);
+            }
+            TxCall::RegisterAttestCoordinator {
+                job_id,
+                coordinators,
+            } => {
+                // Roadmap #6 stub: any account can register an authority
+                // today. v0.5 lands the 2-of-3 SLH-DSA governance
+                // threshold gate (same staging pattern as UpgradeCrypto).
+                let record = CoordinatorAuthority {
+                    job_id: *job_id,
+                    coordinators: coordinators.iter().map(|id| id.0).collect(),
+                    registered_at_height: block.header.height,
+                };
+                let mut buf = Vec::new();
+                ciborium::ser::into_writer(&record, &mut buf)
+                    .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
+                let key = attest_auth_key(job_id);
+                store.put(Subtree::Meta, &key, &buf);
             }
             TxCall::UpgradeCrypto {
                 target_height,
@@ -291,7 +363,9 @@ fn validate_tx(
         // Stubs: zero-effect on accounts, but signature still gets verified
         // by the path below. Apply pass writes effects to Meta / Reflect
         // subtrees instead of moving balance.
-        TxCall::UpgradeCrypto { .. } | TxCall::AttestRound { .. } => (
+        TxCall::UpgradeCrypto { .. }
+        | TxCall::AttestRound { .. }
+        | TxCall::RegisterAttestCoordinator { .. } => (
             tx.from_account, // self-transfer of zero so the apply pass exists
             0u128,
         ),
@@ -568,6 +642,190 @@ mod tests {
             apply_block(&mut store, &block, 50),
             Err(ApplyError::UpgradeSigAlgoNotAllowed { sig_algo: 99, .. })
         ));
+    }
+
+    /// Roadmap #6: `RegisterAttestCoordinator` writes a CoordinatorAuthority
+    /// record. After it lands, `AttestRound` from a non-listed account is
+    /// rejected; from a listed account it succeeds.
+    #[test]
+    fn attest_round_authority_registry_gates_attesters() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+        // Alice will register herself as the sole authority for job_id.
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+        // Mallory is NOT in the authority list and will try to attest.
+        let (mallory_sk, mallory_pk) = crypto::ed25519_keypair(&mut rng);
+        let mallory = AccountId::from_pubkey(&mallory_pk);
+        accounts::save(
+            &mut store,
+            &mallory,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: mallory_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+
+        let job_id = [0xAB; 32];
+
+        // --- Block A: Alice registers herself as the only coordinator.
+        let mut reg_tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::RegisterAttestCoordinator {
+                job_id,
+                coordinators: vec![alice],
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let reg_sig = crypto::sign(3, &alice_sk, &reg_tx.signing_hash()).unwrap();
+        let reg_witness = Witness {
+            sig_algo: 3,
+            sig: reg_sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        reg_tx.witness_hash = reg_witness.hash();
+        let block_a = Block {
+            header: empty_header(),
+            body: BlockBody {
+                txs: vec![reg_tx],
+                witnesses: vec![reg_witness],
+            },
+        };
+        apply_block(&mut store, &block_a, 50).expect("registration applies");
+
+        // Authority record landed.
+        let auth = load_attest_authority(&store, &job_id).expect("authority exists");
+        assert_eq!(auth.coordinators, vec![alice.0]);
+
+        // --- Block B: Mallory tries to AttestRound — must be rejected.
+        let mut bad_tx = TxBody {
+            nonce: 0,
+            from_account: mallory,
+            call: TxCall::AttestRound {
+                job_id,
+                round_id: 1,
+                model_hash: [0u8; 32],
+                dp_epsilon_milli: 1500,
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let bad_sig = crypto::sign(3, &mallory_sk, &bad_tx.signing_hash()).unwrap();
+        let bad_witness = Witness {
+            sig_algo: 3,
+            sig: bad_sig,
+            pubkey: PubKeyRef::Known(mallory),
+        };
+        bad_tx.witness_hash = bad_witness.hash();
+        let mut header_b = empty_header();
+        header_b.height = 2;
+        let block_b = Block {
+            header: header_b,
+            body: BlockBody {
+                txs: vec![bad_tx],
+                witnesses: vec![bad_witness],
+            },
+        };
+        assert!(matches!(
+            apply_block(&mut store, &block_b, 50),
+            Err(ApplyError::AttestCoordinatorNotAuthorized { .. })
+        ));
+
+        // --- Block C: Alice attests, must succeed.
+        let mut good_tx = TxBody {
+            nonce: 1, // alice's nonce after the registration tx
+            from_account: alice,
+            call: TxCall::AttestRound {
+                job_id,
+                round_id: 1,
+                model_hash: [0xCD; 32],
+                dp_epsilon_milli: 1500,
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let good_sig = crypto::sign(3, &alice_sk, &good_tx.signing_hash()).unwrap();
+        let good_witness = Witness {
+            sig_algo: 3,
+            sig: good_sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        good_tx.witness_hash = good_witness.hash();
+        let mut header_c = empty_header();
+        header_c.height = 3;
+        let block_c = Block {
+            header: header_c,
+            body: BlockBody {
+                txs: vec![good_tx],
+                witnesses: vec![good_witness],
+            },
+        };
+        apply_block(&mut store, &block_c, 50).expect("alice attests successfully");
+    }
+
+    /// Backward compat: a job_id with no registry stays open to any
+    /// attester (testnet default — preserves the v0.4 testnet-3 surface).
+    #[test]
+    fn attest_round_open_for_unregistered_job() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+        let mut tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::AttestRound {
+                job_id: [0x77; 32], // never registered
+                round_id: 1,
+                model_hash: [0u8; 32],
+                dp_epsilon_milli: 0,
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let sig = crypto::sign(3, &alice_sk, &tx.signing_hash()).unwrap();
+        let witness = Witness {
+            sig_algo: 3,
+            sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        tx.witness_hash = witness.hash();
+        let block = Block {
+            header: empty_header(),
+            body: BlockBody {
+                txs: vec![tx],
+                witnesses: vec![witness],
+            },
+        };
+        apply_block(&mut store, &block, 50).expect("open job accepts any attester");
     }
 }
 

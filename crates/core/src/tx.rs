@@ -92,6 +92,24 @@ pub enum TxCall {
         /// Zero is a valid value meaning "no DP applied at this round".
         dp_epsilon_milli: u32,
     },
+    /// Register the coordinator authority registry for an FL job. Once a
+    /// registry exists for a `job_id`, only accounts in the `coordinators`
+    /// list may emit `AttestRound` for that `job_id`. Jobs without a
+    /// registry stay open (any account can attest), preserving testnet
+    /// backward compatibility.
+    ///
+    /// In v0.5 this transaction will require a 2-of-3 SLH-DSA-128s
+    /// governance threshold signature. v0.4 records the registry but
+    /// doesn't gate the registration tx itself — same staging pattern as
+    /// `UpgradeCrypto`.
+    RegisterAttestCoordinator {
+        /// FL job to scope the authority to.
+        job_id: [u8; 32],
+        /// Accounts permitted to emit `AttestRound { job_id, .. }` once
+        /// this record is committed. An empty list re-opens the job to
+        /// any attester (rarely useful, but explicit).
+        coordinators: Vec<AccountId>,
+    },
 }
 
 /// The body of a transaction — everything that gets signed.
@@ -187,6 +205,22 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             h.update(&round_id.to_le_bytes());
             h.update(model_hash);
             h.update(&dp_epsilon_milli.to_le_bytes());
+        }
+        TxCall::RegisterAttestCoordinator {
+            job_id,
+            coordinators,
+        } => {
+            h.update(&[5u8]);
+            h.update(job_id);
+            h.update(&(coordinators.len() as u32).to_le_bytes());
+            // Sort by AccountId bytes for canonical encoding so two
+            // signers who supply the same set in different orders
+            // produce the same signing hash.
+            let mut ids: Vec<&AccountId> = coordinators.iter().collect();
+            ids.sort_by(|a, b| a.0.cmp(&b.0));
+            for id in ids {
+                h.update(&id.0);
+            }
         }
     }
 }
