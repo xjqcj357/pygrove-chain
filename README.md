@@ -2,124 +2,46 @@
 
 A small proof-of-work blockchain that listens to itself.
 
-- **Bitcoin-style curve** — 10-min blocks, 2016-block retargets, 210k halvings, 21M cap.
-- **The Accordion** — adaptive emission driven by two bellows: hashrate and sybil-guarded adoption.
-- **The Reflection** — rolling on-chain stats committed into a dedicated state subtree; consensus and (future) contracts read their own past.
-- **ETF-of-one objective** — the accordion is steered by a stability-seeking function (flat fees-per-active-address), not just a monotone adaptation. The chain is its own basket.
-- **Quantum- and photonic-hostile PoW** — RandomX-lite proposer (memory-hard, branchy microcode, photonic matmul immune) + class-group Wesolowski VDF finalizer (inherently sequential, no trusted setup).
-- **Post-quantum signatures** — Falcon-512 / FN-DSA (integer sampler) for hot txs; SLH-DSA-128s for cold governance keys.
-- **Crypto-agile from block zero** — `SigAlgo` and `HashAlgo` tag bytes on every primitive; `UpgradeCrypto` governance tx activates new algos at a future height with no hard fork. Designed to run for 127 years.
-- **Authenticated state** — GroveDB-style hierarchical Merkle store; every query is provable.
+It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retargets, halvings every 210,000 blocks, a 21,000,000-coin hard cap — and adds a measured kind of self-awareness on top. The chain reads its own statistics from a dedicated subtree of its own state. Emission breathes with hashrate and adoption inside that information. The cryptography is post-quantum where it can be, agile where it can't. The design horizon is 127 years.
 
-Status: **v0.3.0-testnet — public testnet `pygrove-testnet-2` is live, send & receive works.** See [Whitepaper](docs/whitepaper.md) for the protocol, [RELEASES.md](RELEASES.md) for what each tag actually shipped, and below for participation.
+## Where it lives
 
-> **What's actually live.** The whitepaper specifies the v1.0 protocol; the
-> tagged testnet ships the accordion math, reflection layout, fair-launch
-> ceremony, U256 retarget, domain-tagged hashing, signed transactions with
-> full account state via `apply_block`, a mempool, and end-to-end wallet flow
-> (mobile + Windows). The PoW seal is Blake3-XOF-512 (RandomX-lite + VDF
-> deferred to v1.1). Phase A signs with **Ed25519** (`sig_algo = 3`);
-> Falcon-512 (`1`) and SLH-DSA-128s (`2`) are tag-plumbed but still
-> `NotWired` — they activate via `UpgradeCrypto` in Phase B, which itself
-> is the first real exercise of the crypto-agility layer the whitepaper
-> promises. The contract VM is a placeholder. See
-> [Whitepaper §0 v0.1 scope](docs/whitepaper.md#0-v01-implementation-scope)
-> for the authoritative live/deferred map. **Don't deploy economic value
-> on testnet that assumes deferred components are present.**
+The third public testnet (`pygrove-testnet-3`) launched on 2026-05-10 at 03:00 UTC. You can touch it at:
 
-## Try it
+- **Wallet** — [str4w.com](https://str4w.com/), works on any phone or browser
+- **Block explorer** — [str4w.com/explorer](https://str4w.com/explorer/)
+- **Emission monitor** — [str4w.com/info](https://str4w.com/info/), zooming from one hour to one hundred and twenty-seven years
+- **Windows desktop** — `pygrove-gui.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases)
+- **JSON-RPC** — `https://str4w.com/api/testnet/rpc`
 
-Three clients, all talking to the same chain:
+The same `pyg1...` address works on every client. Your secret-key file carries between them.
 
-| | |
-|---|---|
-| **Web wallet** *(any phone or browser)* | https://str4w.com/ |
-| **Block explorer** | https://str4w.com/explorer/ |
-| **Emission monitor** *(actual vs. 127y planned)* | https://str4w.com/info/ |
-| **Windows GUI** *(wallet + miner)* | [latest release](https://github.com/xjqcj357/pygrove-chain/releases) → `pygrove-gui.exe` |
-| **JSON-RPC** *(headless / scripting)* | `https://str4w.com/api/testnet/rpc` (HTTPS, same-origin) or `http://66.42.93.85:8545/rpc` |
+## What's distinctive
 
-Same `pyg1...` address works on any client — wallet keys port across them via Export / Import.
+The protocol does five things you won't find together anywhere else.
 
-## Public testnet — `pygrove-testnet-2`
+The first is **the Accordion.** Two adaptive bellows — one tracking hashrate ratio period over period, the other tracking the count of unique sybil-guarded active addresses — modulate the halving schedule and difficulty around Bitcoin's curve. When both bellows are pumping, halvings arrive sooner and difficulty doesn't lag. When they deflate, halvings pause. At equilibrium it's pure Bitcoin.
 
-Fair-launch testnet running on `66.42.93.85`. **No premine.** The node refuses
-to accept block submissions before genesis time; the genesis coinbase carries
-a Bitcoin block hash mined before our deploy as proof-of-no-prior-knowledge.
+The second is **the Reflection.** A dedicated `reflect/` subtree of the chain state holds rolling statistics — hashrate, active addresses, fee density, emission rate — across short (144 blocks), long (2,016), and epoch (210,000) windows. Consensus reads them to compute the accordion. A future Python contract VM reads them via a `CHAIN_REFLECT` opcode. The chain learns from its own past.
 
-| | |
-|---|---|
-| **Chain ID** | `pygrove-testnet-2` |
-| **Genesis time** | `2026-05-10 00:00:00 UTC` (`genesis_time_ms = 1778371200000`) |
-| **Genesis hash** | `000077e5ac42f9540a69655e9f889e60b44639c7a34e1b8c30bcdb56d388f5d7` |
-| **Genesis headline** | BTC block `948515` — `00000000000000000001b62fbb2361bb622e8b767db52961d700cb0ad352304e` (mined `2026-05-08 22:23:16 UTC`) |
-| **Initial bits** | `0x1f00ffff` (laptop-mineable; mainnet uses harder bits matched to expected launch hashrate) |
-| **Sig algo** | `3` (Ed25519) — Phase A bringup; rotates to Falcon-512 (`1`) via `UpgradeCrypto` in Phase B |
-| **Block reward** | 50 PYG |
-| **Hard cap** | 21,000,000 PYG |
+The third is **the ETF of one.** The accordion is steered toward flat fees-per-active-address — a proxy for whether the median user finds the chain affordable. No oracles. The chain rebalances itself on every retarget against a basket whose only constituent is itself.
 
-testnet-1 was retired pre-launch when we landed real send/receive (the
-protocol shape changed substantively). testnet-2 ships the same fair-launch
-ceremony with the new mechanics in place: AccountId + bech32 addresses,
-signed transactions, mempool, `apply_block`, wallet balance polling, mobile
-+ desktop clients.
+The fourth is **calendar emission.** Per-block reward is a delta against a wall-clock schedule, capped per block. Even when blocks land a hundred times faster than target during difficulty discovery, cumulative emission tracks the calendar. No premine optics, by construction.
 
-### Verifying the genesis headline
+The fifth is **crypto agility from block zero.** Every signature carries a one-byte algorithm tag. Every hash carries one too. Genesis runs Ed25519 on testnet. Falcon-512, SLH-DSA-128s, ML-DSA-65, and SHA3-512 are tag-plumbed and waiting. An `UpgradeCrypto` governance transaction activates new primitives at a future block height — no fork. The chain is meant to outlive its first cryptosuite, and its second, and its third.
 
-The headline is a Bitcoin block hash that did not exist before its block's
-timestamp. You can confirm independently:
+## What's actually shipped
 
-```bash
-curl https://blockstream.info/api/block/00000000000000000001b62fbb2361bb622e8b767db52961d700cb0ad352304e | jq
-```
+The whitepaper specifies the v1.0 protocol. The current testnet is honest about which parts are live.
 
-That hash appears as the genesis block's `coinbase` field on PyGrove. Nothing
-about it was predictable before BTC mined block 948515 (`2026-05-08 22:23:16 UTC`),
-so the PyGrove genesis cannot have been mined before that moment.
+Live now: calendar emission, ASERT-2D per-block retarget, the eight-percent bits clamp, the twenty-five-percent issuance slew-rate limit, bootstrap-mode caps for the first 2,016 blocks, the reflection subtree, signed transactions with full account state, the mempool, the federated-attestation transaction surface, the mobile and desktop wallets, and the explorer.
 
-### Mining
+Plumbed but not yet wired: Falcon-512, SLH-DSA-128s, ML-DSA-65, the WASM contract VM, the BFT finality gadget, peer-to-peer networking. Each is the work of the next sprint.
 
-Download `pygrove-gui.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases),
-double-click, click **Connect** (the RPC URL is pre-filled), then **Start mining**.
-Block rewards land in the wallet generated on first launch (`%APPDATA%\PyGrove\wallet.json`).
-
-Headless miners on Linux/macOS use `pygrove-cli` from the same release,
-pointed at the public RPC.
-
-A throttled server-side miner runs at ~5 H/s as a chain keepalive — when no
-external miner is online, blocks land every ~3.6 hours. With even a casual
-laptop attached, the laptop wins essentially every block.
-
-## Layout
-
-```
-crates/core        # Block, Tx, SigAlgo / HashAlgo tags, canonical CBOR, Blake3-XOF-512, bech32 addresses
-crates/crypto      # Ed25519 (Phase A), Falcon-512 / SLH-DSA-128s slots (Phase B)
-crates/consensus   # RandomX-lite stub, retarget (U256), accordion, reflection, emission
-crates/state       # Authenticated KV store, subtree tags, apply_block, account model
-crates/vm          # stub for v1.2 Python VM
-crates/node        # node daemon + clap CLI + JSON-RPC + bundled explorer
-crates/gui         # Slint GUI shell — pygrove-gui wallet + miner
-sim/               # Python 3.13 accordion simulator with BTC backtest + adversarial traces
-web/               # Janet landing-page sidecar (~80-line Lisp)
-web-mobile/        # str4w.com SPA — mobile wallet, explorer, emission monitor
-docs/whitepaper.md # Protocol specification
-RELEASES.md        # Per-version release notes
-```
-
-## Build
-
-Linux (CI-blessed):
-
-```bash
-cargo build --workspace
-cargo test --workspace
-```
-
-Windows GUI builds via CI on `windows-latest` and is uploaded as the
-`pygrove-gui-windows-x86_64` artifact on every push to `main`. Tagged
-releases attach the same artifact under [GitHub Releases](https://github.com/xjqcj357/pygrove-chain/releases).
+Not on testnet by design: real economic value. Mainnet ships when the deferred items are wired and the threat model has passed external review.
 
 ## License
 
-Apache-2.0 for source code. CC BY 4.0 recommended for the whitepaper. See [LICENSE](LICENSE).
+Apache-2.0 for the source. CC BY 4.0 for the whitepaper.
+
+Whitepaper at [docs/whitepaper.md](docs/whitepaper.md). Per-tag changelog at [RELEASES.md](RELEASES.md). Current sprint's design ledger at [docs/sprint-plan.md](docs/sprint-plan.md).
