@@ -24,12 +24,12 @@
 //!
 //! ## API surface (stable across both profiles)
 //!
-//! - [`Vm`]: trait. `compile(code)`, `run(handle, method, args, gas)`.
-//! - [`VmError`]: failure cases — out-of-gas, trap, host-rejected, etc.
-//! - [`Host`]: registry of host functions exposed to contracts. v0.5
+//! - [`Vm`] — trait. `compile(code)`, `run(handle, method, args, gas)`.
+//! - [`VmError`] — failure cases (out-of-gas, trap, host-rejected, etc).
+//! - [`Host`] — registry of host functions exposed to contracts. v0.5
 //!   stocks one function: `chain_reflect_get(key) -> bytes`.
-//! - [`RejectingVm`]: default backend. Always `Err(VmError::NotEnabled)`.
-//! - [`WasmtimeVm`]: feature-gated.
+//! - [`RejectingVm`] — default backend. Always `Err(VmError::NotEnabled)`.
+//! - `WasmtimeVm` — feature-gated.
 
 use thiserror::Error;
 
