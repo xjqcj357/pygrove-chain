@@ -1,4 +1,4 @@
-# PyGrove Chain — TESTNET-4 genesis
+# PyGrove Chain — TESTNET-3 genesis (24-hour announce window)
 #
 # Fair-launch ceremony (24-hour public-announcement window):
 #   - genesis_time_ms is a future, publicly-announced wall-clock time.
@@ -9,27 +9,23 @@
 #   - 24-hour announce window: nobody can mine until the wall clock catches up,
 #     so anyone can spin up a node from a clean clone before block 1 lands.
 #
-# What's new in testnet-4:
-#   - Same protocol as testnet-3 (calendar emission + ASERT-2D + bootstrap mode).
-#   - Fresh genesis with a 24-hour public announce window, so the launch is
-#     verifiably non-premined: the source is public for 24 hours before mining
-#     can start.
-#   - Windows builds for `pygrove-node.exe` + `pygrove-cli.exe` shipped from
-#     CI alongside `pygrove-gui.exe`.
-#
-# What's new in testnet-3 (kept):
+# What's in testnet-3:
 #   - **Calendar-driven emission.** Per-block reward is no longer a constant;
 #     it's a delta against `scheduled_supply_at(timestamp)`, capped per-block.
 #     Fixes the testnet-2 inflation bug (economic loop running faster than
 #     security loop). See `crates/consensus/src/emission.rs`.
+#   - **ASERT-2D per-block retarget** + 8% bits clamp + 25% issuance
+#     slew-rate + bootstrap mode for the first 2,016 blocks.
 #   - `seconds_per_halving` field added (was implicit at 4 years).
 #   - Same `pyg1...` addresses as testnet-2 — keys port forward unchanged.
+#   - Windows builds for `pygrove-node.exe` + `pygrove-cli.exe` shipped from
+#     CI alongside `pygrove-gui.exe`.
 
-chain_id                = "pygrove-testnet-4"
-genesis_time_ms         = 1778468929000        # 2026-05-11 03:08:49 UTC (+24h)
+chain_id                = "pygrove-testnet-3"
+genesis_time_ms         = 1778468929000        # 2026-05-11 03:08:49 UTC (+24h announce window)
 genesis_headline_hex    = "00000000000000000000b1bb4f3506940ad5af17eb7a51d91ab5745dd738760d"
 # ^ Bitcoin block 948713. Embedded into the genesis coinbase slot as
-#   proof-of-no-prior-knowledge for the testnet-4 fair-launch ceremony.
+#   proof-of-no-prior-knowledge for the testnet-3 fair-launch ceremony.
 
 # Bitcoin-curve skeleton — same as testnet-2 (laptop-mineable initial bits).
 initial_bits            = 0x1f00ffff
