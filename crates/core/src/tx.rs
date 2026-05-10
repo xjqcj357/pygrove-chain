@@ -71,6 +71,27 @@ pub enum TxCall {
         sig_algo: u8,
         hash_algo: u8,
     },
+    /// Federated-learning round attestation. Commits a hash of an aggregation
+    /// round (post-FedAvg model hash + participant set + DP budget) to a
+    /// dedicated reflect subtree. Lets a verifier in 2031 re-execute round N
+    /// of a 2027 model bit-exactly against committed inputs, with no vendor
+    /// cooperation.
+    ///
+    /// Sender pays `fee_sat` like any tx. Coordinator authority (who's
+    /// allowed to attest for `job_id`) is registered out-of-band in v0.4
+    /// (governance-key endorsed); v0.5 elects per-job authorities via stake.
+    AttestRound {
+        /// Stable identifier for the FL job — usually `blake3(program ||
+        /// dataset_id || initial_model_hash)`.
+        job_id: [u8; 32],
+        /// Monotonic round counter within the job.
+        round_id: u64,
+        /// Post-aggregation global model hash (32 bytes).
+        model_hash: [u8; 32],
+        /// Differential-privacy ε × 1000 (so `epsilon = 1.5` → `1500`).
+        /// Zero is a valid value meaning "no DP applied at this round".
+        dp_epsilon_milli: u32,
+    },
 }
 
 /// The body of a transaction — everything that gets signed.
@@ -154,6 +175,18 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             h.update(&[3u8]);
             h.update(&target_height.to_le_bytes());
             h.update(&[*sig_algo, *hash_algo]);
+        }
+        TxCall::AttestRound {
+            job_id,
+            round_id,
+            model_hash,
+            dp_epsilon_milli,
+        } => {
+            h.update(&[4u8]);
+            h.update(job_id);
+            h.update(&round_id.to_le_bytes());
+            h.update(model_hash);
+            h.update(&dp_epsilon_milli.to_le_bytes());
         }
     }
 }

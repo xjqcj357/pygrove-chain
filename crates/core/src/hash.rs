@@ -70,6 +70,21 @@ pub fn hash_with_domain(algo: HashAlgo, domain: &str, bytes: &[u8]) -> Digest64 
             reader.read(&mut out);
             out
         }
+        HashAlgo::Sha3_512 => {
+            // FIPS-profile path. SHA3-512 produces 64 bytes natively, so
+            // (unlike Blake3-XOF / SHAKE256) there's no XOF expansion step.
+            // Wired here so an UpgradeCrypto rotation to hash_algo = 3 has
+            // a working dispatch; CMVP validation of the underlying primitive
+            // is upstream `sha3` crate's responsibility.
+            use sha3::{Digest, Sha3_512};
+            let mut h = Sha3_512::new();
+            sha3::digest::Update::update(&mut h, &tag);
+            sha3::digest::Update::update(&mut h, bytes);
+            let result = h.finalize();
+            let mut out = [0u8; 64];
+            out.copy_from_slice(&result[..]);
+            out
+        }
     }
 }
 

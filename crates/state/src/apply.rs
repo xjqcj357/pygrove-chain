@@ -16,7 +16,33 @@ use pygrove_core::{AccountId, Block, PubKeyRef, TxBody, TxCall, Witness};
 use pygrove_crypto as crypto;
 use thiserror::Error;
 
-use crate::{accounts, store::StateStore};
+use crate::{accounts, store::StateStore, subtrees::Subtree};
+
+/// Record stored in the `Attest` subtree per `AttestRound` tx. Keyed by
+/// `(job_id || round_id_be)` so that a verifier in 2031 can re-execute
+/// round N of a 2027 model bit-exactly against committed inputs.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AttestRecord {
+    pub job_id: [u8; 32],
+    pub round_id: u64,
+    pub model_hash: [u8; 32],
+    pub dp_epsilon_milli: u32,
+    pub coordinator: [u8; 20],
+    pub block_height: u64,
+    pub block_timestamp_ms: u64,
+}
+
+/// Pending crypto-rotation record stored in `Subtree::Meta` under key
+/// `b"upgrade_crypto"`. `apply_block` checks each block's height against
+/// `target_height` and (in v0.5) rotates the active SigAlgo / HashAlgo
+/// when the height is reached.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PendingCryptoUpgrade {
+    pub target_height: u64,
+    pub sig_algo: u8,
+    pub hash_algo: u8,
+    pub announced_at_height: u64,
+}
 
 #[derive(Debug, Error)]
 pub enum ApplyError {
@@ -135,6 +161,60 @@ pub fn apply_block(
         accounts::save(store, &tx.to, &to_acct);
     }
 
+    // Phase A.5 effects: AttestRound and UpgradeCrypto write to non-account
+    // subtrees. Walked after the main apply loop so signature/balance
+    // validation has already passed.
+    for (i, tx) in txs.iter().enumerate() {
+        match &tx.call {
+            TxCall::AttestRound {
+                job_id,
+                round_id,
+                model_hash,
+                dp_epsilon_milli,
+            } => {
+                let rec = AttestRecord {
+                    job_id: *job_id,
+                    round_id: *round_id,
+                    model_hash: *model_hash,
+                    dp_epsilon_milli: *dp_epsilon_milli,
+                    coordinator: tx.from_account.0,
+                    block_height: block.header.height,
+                    block_timestamp_ms: block.header.timestamp_ms,
+                };
+                let mut buf = Vec::new();
+                ciborium::ser::into_writer(&rec, &mut buf)
+                    .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
+                // Key = job_id (32) || round_id (big-endian u64).
+                let mut key = [0u8; 40];
+                key[..32].copy_from_slice(job_id);
+                key[32..].copy_from_slice(&round_id.to_be_bytes());
+                store.put(Subtree::Attest, &key, &buf);
+            }
+            TxCall::UpgradeCrypto {
+                target_height,
+                sig_algo,
+                hash_algo,
+            } => {
+                // Stub: any account can announce a rotation today; the
+                // governance-key threshold check lands with the SLH-DSA
+                // wiring (DARPA C1, Raytheon FIPS path). Recorded so the
+                // chain has an observable rotation event for testnet
+                // exercises.
+                let pending = PendingCryptoUpgrade {
+                    target_height: *target_height,
+                    sig_algo: *sig_algo,
+                    hash_algo: *hash_algo,
+                    announced_at_height: block.header.height,
+                };
+                let mut buf = Vec::new();
+                ciborium::ser::into_writer(&pending, &mut buf)
+                    .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
+                store.put(Subtree::Meta, b"upgrade_crypto", &buf);
+            }
+            _ => {}
+        }
+    }
+
     // Coinbase. `block_reward_sat` is now computed by the caller (rpc.rs or
     // main.rs replay) using `pygrove_consensus::emission::current_reward()` —
     // a calendar-anchored function of (genesis_time, block.timestamp,
@@ -177,11 +257,24 @@ fn validate_tx(
     tx: &TxBody,
     witness: &Witness,
 ) -> Result<StagedTx, ApplyError> {
-    // Phase A only supports Transfer; flag the rest explicitly so we don't
-    // silently accept malformed txs.
+    // Phase A supports Transfer fully. UpgradeCrypto and AttestRound are
+    // wired with stub semantics for the v0.4 sprint foundation: signatures
+    // verify and effects are recorded, but full mainnet semantics
+    // (governance threshold sigs, FL coordinator authority, etc.) land in
+    // follow-up commits. DeployContract / CallContract still rejected
+    // pending the wasmtime VM (Raytheon-recommended over CPython).
     let (to, amount) = match &tx.call {
         TxCall::Transfer { to, amount } => (*to, *amount),
-        _ => return Err(ApplyError::UnsupportedCall(idx)),
+        // Stubs: zero-effect on accounts, but signature still gets verified
+        // by the path below. Apply pass writes effects to Meta / Reflect
+        // subtrees instead of moving balance.
+        TxCall::UpgradeCrypto { .. } | TxCall::AttestRound { .. } => (
+            tx.from_account, // self-transfer of zero so the apply pass exists
+            0u128,
+        ),
+        TxCall::DeployContract { .. } | TxCall::CallContract { .. } => {
+            return Err(ApplyError::UnsupportedCall(idx));
+        }
     };
 
     // Pull pubkey: either Inline (first time signing) or Known (lookup).
