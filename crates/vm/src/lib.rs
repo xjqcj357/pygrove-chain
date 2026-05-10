@@ -164,8 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn host_default_constructs() {
+    fn host_constructs() {
         let _h = Host::new();
-        let _h2 = Host::default();
     }
 }
