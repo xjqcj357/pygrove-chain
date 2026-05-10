@@ -22,17 +22,23 @@ rand_core = { workspace = true, optional = true, features = ["getrandom"] }
 # 0.1 (Pornin's pure-Rust port). Optional behind `falcon`; FIPS builds drop
 # Falcon (FIPS 206 draft, not yet allowlisted).
 fn-dsa = { workspace = true, optional = true }
+# BLS12-381 (sig_algo = 5). Hot signature for the BFT finality
+# committee — aggregation collapses N validator sigs into one verify.
+blst = { workspace = true, optional = true }
 
 [features]
-# Default: Ed25519 + Falcon-512 wired. Matches the v0.4 testnet-3 binary
-# surface. SLH-DSA-128s (sig_algo=2) is reserved at the dispatch slot but
-# returns NotWired — the upstream slh-dsa 0.1 crate pins a pre-release of
-# `signature` that conflicts with ed25519-dalek.
-default = ["ed25519", "falcon"]
+# Default: Ed25519 + Falcon-512 + BLS wired. Matches the v0.4 testnet-3
+# binary surface. SLH-DSA-128s (sig_algo=2) is reserved at the dispatch
+# slot but returns NotWired — the upstream slh-dsa 0.1 crate pins a
+# pre-release of `signature` that conflicts with ed25519-dalek.
+default = ["ed25519", "falcon", "bls"]
 # Ed25519 hot signature path (sig_algo=3). Pulls ed25519-dalek + rand_core.
 ed25519 = ["dep:ed25519-dalek", "dep:rand_core"]
 # Falcon-512 hot signature path (sig_algo=1). Pulls fn-dsa + rand_core.
 falcon = ["dep:fn-dsa", "dep:rand_core"]
+# BLS12-381 hot signature path (sig_algo=5). Pulls blst. Used by the
+# BFT finality committee; aggregation collapses N sigs to one verify.
+bls = ["dep:blst", "dep:rand_core"]
 # FIPS-profile build. Excludes Ed25519 + Falcon from the dependency graph
 # entirely. SLH-DSA wiring (which would land here) is currently blocked on
 # upstream — see workspace Cargo.toml. The fips feature still flips

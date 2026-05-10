@@ -17,6 +17,10 @@
 //! - `algo = 3` (Ed25519) — Phase A bringup. Wired when `--features ed25519`
 //!   is active (default-on). Dropped from FIPS builds.
 //! - `algo = 4` (ML-DSA-65 / FIPS 204) — FIPS-profile path, not yet wired.
+//! - `algo = 5` (BLS12-381, min-pk) — finality committee. Wired when
+//!   `--features bls` is active (default-on). Used for aggregated
+//!   finality certs; N validator sigs collapse to a single 96-byte
+//!   sig + 48-byte aggregated pubkey. See [`bls`].
 //!
 //! ## Build profiles
 //!
@@ -49,6 +53,8 @@ const ED_SK_LEN: usize = 32; // ed25519_dalek::SECRET_KEY_LENGTH
 
 #[cfg(feature = "falcon")]
 pub mod falcon;
+#[cfg(feature = "bls")]
+pub mod bls;
 // SLH-DSA-128s module is currently absent — see roadmap #3 in lib.rs docs and
 // the workspace Cargo.toml note. Dispatch slot at sig_algo=2 returns NotWired.
 
@@ -104,6 +110,16 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
                 Err(CryptoError::NotWired)
             }
         }
+        5 => {
+            #[cfg(feature = "bls")]
+            {
+                bls::sign(sk, msg)
+            }
+            #[cfg(not(feature = "bls"))]
+            {
+                Err(CryptoError::NotWired)
+            }
+        }
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
 }
@@ -141,6 +157,16 @@ pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoE
                 Err(CryptoError::NotWired)
             }
         }
+        5 => {
+            #[cfg(feature = "bls")]
+            {
+                bls::verify(pk, sig, msg)
+            }
+            #[cfg(not(feature = "bls"))]
+            {
+                Err(CryptoError::NotWired)
+            }
+        }
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
 }
@@ -153,6 +179,7 @@ pub fn sizes(algo: u8) -> Option<(usize, usize)> {
         2 => Some((32, 7856)),       // SLH-DSA-128s
         3 => Some((32, ED_SIG_LEN)), // Ed25519: 32-byte pk, 64-byte sig
         4 => Some((1952, 3309)),     // ML-DSA-65 (FIPS 204) — sizes per spec
+        5 => Some((48, 96)),         // BLS12-381 min-pk
         _ => None,
     }
 }
@@ -164,8 +191,8 @@ pub const FIPS_ALLOWLIST_SIG: &[u8] = &[2, 4]; // SLH-DSA-128s, ML-DSA-65
 pub const FIPS_ALLOWLIST_HASH: &[u8] = &[3]; // SHA3-512
 
 /// Algorithms approved on the default (testnet) build. Wider — includes
-/// the Phase A bringup primitives.
-pub const DEFAULT_ALLOWLIST_SIG: &[u8] = &[1, 2, 3, 4];
+/// the Phase A bringup primitives + BLS for finality aggregation.
+pub const DEFAULT_ALLOWLIST_SIG: &[u8] = &[1, 2, 3, 4, 5];
 pub const DEFAULT_ALLOWLIST_HASH: &[u8] = &[1, 2, 3];
 
 /// The signature-algorithm allowlist active in this build.
@@ -373,6 +400,19 @@ mod tests {
     #[test]
     fn mldsa_still_not_wired() {
         assert!(matches!(sign(4, &[], b""), Err(CryptoError::NotWired)));
+    }
+
+    #[cfg(feature = "bls")]
+    #[test]
+    fn bls_dispatch_roundtrips() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+        let (sk, vk) = bls::keypair(&mut rng);
+        let msg = b"bls via the dispatch surface";
+        let sig = sign(5, &sk, msg).expect("bls sign via dispatch");
+        assert_eq!(sig.len(), bls::BLS_SIG_LEN);
+        verify(5, &vk, &sig, msg).expect("bls verify via dispatch");
+        verify(5, &vk, &sig, b"tampered").expect_err("tampered msg fails");
     }
 
     #[test]

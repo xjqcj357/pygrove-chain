@@ -140,6 +140,67 @@ pub struct FinalizationCert {
     pub votes: Vec<FinalizationVote>,
 }
 
+/// **Aggregated** finality certificate, the mainnet shape. All committee
+/// members sign the same `signing_payload()`, then the proposer:
+///
+/// 1. Aggregates the N signatures into a single 96-byte BLS sig.
+/// 2. Records a `signer_bitmap` indicating which committee slots signed
+///    (LSB = committee.members[0]).
+///
+/// Verification: recompute the aggregated pubkey from `bitmap & committee.members`
+/// (BLS aggregate-pubkeys), then a single pairing check against `agg_sig`
+/// over `signing_payload()`. Constant-sized cert regardless of committee
+/// size; verify cost is O(popcount) for pubkey aggregation + one pairing.
+///
+/// `agg_sig_algo` must be `5` (BLS12-381 min-pk). Other algos can't
+/// aggregate this way — they'd need the plain `FinalizationCert` shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedFinalizationCert {
+    pub committee_epoch: u64,
+    pub round: u64,
+    pub block_height: u64,
+    pub block_hash: [u8; 32],
+    /// Bitmap of signers. `signer_bitmap[i / 8] & (1 << (i % 8))` set
+    /// means `committee.members[i]` is in the aggregation. Length =
+    /// `ceil(committee.members.len() / 8)`.
+    #[serde(with = "serde_bytes")]
+    pub signer_bitmap: Vec<u8>,
+    pub agg_sig_algo: u8,
+    #[serde(with = "serde_bytes")]
+    pub agg_sig: Vec<u8>,
+}
+
+impl AggregatedFinalizationCert {
+    /// The payload every committee member signs (and the verifier
+    /// re-derives). Identical shape to `FinalizationVote::signing_hash`
+    /// minus the per-validator id — aggregation requires every signer
+    /// to sign the same message.
+    pub fn signing_payload(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        h.update(b"PGfinalagg\x00");
+        h.update(&self.committee_epoch.to_le_bytes());
+        h.update(&self.round.to_le_bytes());
+        h.update(&self.block_height.to_le_bytes());
+        h.update(&self.block_hash);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(h.finalize().as_bytes());
+        out
+    }
+
+    /// Count of validators marked as signers in the bitmap.
+    pub fn signer_count(&self) -> u32 {
+        self.signer_bitmap.iter().map(|b| b.count_ones()).sum()
+    }
+
+    /// Whether the slot at `index` is set in the bitmap.
+    pub fn is_signer(&self, index: usize) -> bool {
+        match self.signer_bitmap.get(index / 8) {
+            Some(byte) => (byte >> (index % 8)) & 1 == 1,
+            None => false,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum FinalityError {
     #[error("vote signature failed verification (validator {0:?})")]
@@ -234,6 +295,64 @@ pub fn verify_cert(
 #[inline]
 pub fn reorg_allowed(finalized_height: u64, candidate_height: u64) -> bool {
     candidate_height >= finalized_height
+}
+
+/// Verify a BLS-aggregated finality certificate. Folds the
+/// bitmap-indicated committee pubkeys into a single aggregated key,
+/// then performs one pairing check against `agg_sig` over
+/// `cert.signing_payload()`. O(popcount) pubkey ops + one pairing —
+/// independent of total committee size on the wire.
+///
+/// **Requirements:**
+/// - `cert.agg_sig_algo == 5` (BLS12-381 min-pk; the only aggregating
+///   sig wired today).
+/// - Every committee member referenced by the bitmap has
+///   `sig_algo == 5`. Mixed-algo committees are not supported in v1
+///   (move to plain `FinalizationCert` if you need that).
+/// - `cert.signer_count() >= committee.quorum`.
+pub fn verify_aggregated_cert(
+    committee: &Committee,
+    cert: &AggregatedFinalizationCert,
+) -> Result<(), FinalityError> {
+    if cert.committee_epoch != committee.epoch {
+        return Err(FinalityError::EpochMismatch(
+            cert.committee_epoch,
+            committee.epoch,
+        ));
+    }
+    if cert.signer_count() < committee.quorum {
+        return Err(FinalityError::BelowQuorum {
+            got: cert.signer_count(),
+            need: committee.quorum,
+        });
+    }
+    if cert.agg_sig_algo != 5 {
+        return Err(FinalityError::AlgoMismatch(cert.agg_sig_algo));
+    }
+    // Collect the signer pubkeys per the bitmap. All must be sig_algo=5.
+    let mut signer_pks: Vec<&[u8]> = Vec::new();
+    for (i, member) in committee.members.iter().enumerate() {
+        if !cert.is_signer(i) {
+            continue;
+        }
+        if member.sig_algo != 5 {
+            return Err(FinalityError::AlgoMismatch(member.sig_algo));
+        }
+        signer_pks.push(&member.pubkey);
+    }
+    if signer_pks.is_empty() {
+        return Err(FinalityError::BelowQuorum {
+            got: 0,
+            need: committee.quorum,
+        });
+    }
+    // Aggregate pubkeys (requires the `bls` feature in pygrove-crypto;
+    // unconditionally pulled by pygrove-finality's deps).
+    let agg_pk = pygrove_crypto::bls::aggregate_pubkeys(&signer_pks)
+        .map_err(|_| FinalityError::BadSignature([0u8; 32]))?;
+    pygrove_crypto::bls::verify_aggregated(&agg_pk, &cert.agg_sig, &cert.signing_payload())
+        .map_err(|_| FinalityError::BadSignature([0u8; 32]))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -380,6 +499,123 @@ mod tests {
         a.round = 2;
         let h_round_changed = a.signing_hash();
         assert_ne!(h0, h_round_changed, "signing_hash must include round");
+    }
+
+    /// BLS-aggregated 5-of-5 finality cert: every validator signs the
+    /// same payload, sigs aggregate into a 96-byte constant-sized
+    /// signature, verifier folds the bitmap-indicated pubkeys and
+    /// does one pairing check.
+    #[test]
+    fn full_5_of_5_aggregated_roundtrip() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+
+        // 5 BLS keypairs for the committee.
+        let pairs: Vec<([u8; 32], [u8; 48])> = (0..5)
+            .map(|_| pygrove_crypto::bls::keypair(&mut rng))
+            .collect();
+
+        let committee = Committee {
+            epoch: 1,
+            members: pairs
+                .iter()
+                .enumerate()
+                .map(|(i, (_, pk))| ValidatorPubkey {
+                    validator_id: {
+                        let mut id = [0u8; 32];
+                        id[0] = i as u8;
+                        id
+                    },
+                    sig_algo: 5,
+                    pubkey: pk.to_vec(),
+                })
+                .collect(),
+            epoch_blocks: 6,
+            quorum: 5,
+        };
+
+        let cert_proto = AggregatedFinalizationCert {
+            committee_epoch: 1,
+            round: 1,
+            block_height: 6,
+            block_hash: [0xAB; 32],
+            signer_bitmap: vec![0b0001_1111], // all 5 set
+            agg_sig_algo: 5,
+            agg_sig: vec![], // fill in next
+        };
+
+        let payload = cert_proto.signing_payload();
+        let sigs: Vec<Vec<u8>> = pairs
+            .iter()
+            .map(|(sk, _)| pygrove_crypto::bls::sign(sk, &payload).unwrap())
+            .collect();
+        let sig_refs: Vec<&[u8]> = sigs.iter().map(|v| v.as_slice()).collect();
+        let agg_sig = pygrove_crypto::bls::aggregate_signatures(&sig_refs).unwrap();
+
+        let cert = AggregatedFinalizationCert {
+            agg_sig,
+            ..cert_proto
+        };
+
+        verify_aggregated_cert(&committee, &cert).expect("BLS-aggregated 5-of-5 verifies");
+    }
+
+    /// Wrong block_hash tampering trips the aggregated verifier.
+    #[test]
+    fn aggregated_tampered_hash_rejected() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+
+        let pairs: Vec<([u8; 32], [u8; 48])> = (0..3)
+            .map(|_| pygrove_crypto::bls::keypair(&mut rng))
+            .collect();
+        let committee = Committee {
+            epoch: 1,
+            members: pairs
+                .iter()
+                .enumerate()
+                .map(|(i, (_, pk))| ValidatorPubkey {
+                    validator_id: {
+                        let mut id = [0u8; 32];
+                        id[0] = i as u8;
+                        id
+                    },
+                    sig_algo: 5,
+                    pubkey: pk.to_vec(),
+                })
+                .collect(),
+            epoch_blocks: 6,
+            quorum: 3,
+        };
+
+        let original = AggregatedFinalizationCert {
+            committee_epoch: 1,
+            round: 1,
+            block_height: 6,
+            block_hash: [0xAB; 32],
+            signer_bitmap: vec![0b0000_0111],
+            agg_sig_algo: 5,
+            agg_sig: vec![],
+        };
+        let payload = original.signing_payload();
+        let sigs: Vec<Vec<u8>> = pairs
+            .iter()
+            .map(|(sk, _)| pygrove_crypto::bls::sign(sk, &payload).unwrap())
+            .collect();
+        let sig_refs: Vec<&[u8]> = sigs.iter().map(|v| v.as_slice()).collect();
+        let agg_sig = pygrove_crypto::bls::aggregate_signatures(&sig_refs).unwrap();
+
+        // Tamper with block_hash AFTER aggregation. The aggregated sig
+        // no longer matches the new signing_payload.
+        let tampered = AggregatedFinalizationCert {
+            block_hash: [0xCC; 32],
+            agg_sig,
+            ..original
+        };
+        assert!(matches!(
+            verify_aggregated_cert(&committee, &tampered),
+            Err(FinalityError::BadSignature(_))
+        ));
     }
 
     /// Full roundtrip with real Ed25519 sigs (testnet-3 algo).

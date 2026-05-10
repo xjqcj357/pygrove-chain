@@ -67,6 +67,12 @@ serde_json = "1"
 # Blocking HTTP client for `pygrove-cli`. ureq is already transitively in the
 # graph via wasmtime, so the cost is in-graph already.
 ureq = { version = "2", default-features = false, features = ["json"] }
+# BLS12-381 signatures + aggregation, for the finality committee. blst is the
+# canonical fast-path implementation; pure Rust assembly fallback when the
+# `portable` feature is set. We use the min-pubkey-size profile (vk=48B,
+# sig=96B) — opposite from typical Ethereum (min-sig) so signature
+# aggregation cost is what matters here.
+blst = { version = "0.3", default-features = false }
 # Contract VM (v0.5+ scope). Wasmtime over CPython per Palantir oversight —
 # CMVP can't validate an interpreted-Python boundary; wasmtime gives us a
 # clean cryptographic boundary. Optional via `pygrove-vm/wasm`.
