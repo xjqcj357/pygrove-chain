@@ -6,16 +6,18 @@
 //!
 //! The formula:
 //!
-//!     new_target = anchor_target × 2^( (Δt − τblock × Δh) / τ )
+//! ```text
+//! new_target = anchor_target * 2^( (dt - tau_block * dh) / tau )
+//! ```
 //!
 //! where:
 //!   - `anchor_target` is some past block's target (often genesis, or a fixed
 //!     anchor every N retargets — we use the immediate parent as anchor for
 //!     simplicity, matching BCH-ASERT-3D's zero-feedback-loop variant).
-//!   - `Δt = block.timestamp − anchor.timestamp` (seconds — we use ms internally)
-//!   - `τblock` is the target block time
-//!   - `Δh = block.height − anchor.height`
-//!   - `τ` is the difficulty half-life (we default to 2 days, BCH's number)
+//!   - `dt = block.timestamp - anchor.timestamp` (seconds — we use ms internally)
+//!   - `tau_block` is the target block time
+//!   - `dh = block.height - anchor.height`
+//!   - `tau` is the difficulty half-life (we default to 2 days, BCH's number)
 //!
 //! Intuition: if blocks are landing exactly on schedule, `Δt = τblock × Δh`
 //! and the exponent is 0 → `new_target = anchor_target`. If blocks are too

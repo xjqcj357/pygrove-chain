@@ -11,8 +11,10 @@
 //!
 //! The fix: scheduled cumulative supply at any wall-clock time `t` is
 //!
-//!     S(t) = ∑_{i=0}^{epoch-1} R_0/2^i × blocks_per_halving
-//!          + R_0/2^epoch × blocks_in_partial_epoch(t)
+//! ```text
+//! S(t) = sum_{i=0..epoch-1} R_0/2^i * blocks_per_halving
+//!      + R_0/2^epoch * blocks_in_partial_epoch(t)
+//! ```
 //!
 //! where `epoch = floor(t / T_h)`, `T_h = seconds_per_halving`, and
 //! `blocks_per_halving = T_h / target_block_time`. Per-block reward becomes
