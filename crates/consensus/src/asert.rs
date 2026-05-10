@@ -151,7 +151,7 @@ mod tests {
         // Allow tiny rounding error in low byte of high-128.
         let new_hi = u128::from_be_bytes(new[..16].try_into().unwrap());
         let anchor_hi = u128::from_be_bytes(anchor_target[..16].try_into().unwrap());
-        let diff = if new_hi > anchor_hi { new_hi - anchor_hi } else { anchor_hi - new_hi };
+        let diff = new_hi.abs_diff(anchor_hi);
         assert!(
             diff < anchor_hi / 1000, // < 0.1% tolerance
             "on-target should not move difficulty: anchor={anchor_hi} new={new_hi}"

@@ -135,18 +135,18 @@ pub fn current_reward(
 /// for v0.4-sprint. Adds two operator-safety layers on top of the calendar
 /// math:
 ///
-/// 1. **Bootstrap mode** (`height < bootstrap_height`): cap per-block reward
-///    at `bootstrap_reward_pct × epoch_reward / 100`. Even if the schedule
-///    + proportional caps would allow more, the chain is still doing
-///    difficulty discovery — the launch operator should not get full
-///    rewards until the network has stabilized.
+/// 1. **Bootstrap mode** (`height < bootstrap_height`): cap per-block
+///   reward at `bootstrap_reward_pct × epoch_reward / 100`. Even if the
+///   schedule + proportional caps would allow more, the chain is still
+///   doing difficulty discovery — the launch operator should not get
+///   full rewards until the network has stabilized.
 ///
 /// 2. **Slew-rate limit**: change in per-block reward across consecutive
-///    blocks is bounded by `max_reward_pct_change_per_block`. Even if the
-///    calendar's `scheduled_supply` curve discontinuously jumps (e.g.
-///    after a long stall), the actually-paid reward smoothly catches up
-///    block-by-block. Both `prev_reward` arguments may be `None` (genesis
-///    + first replay step) — the slew check is skipped in that case.
+///   blocks is bounded by `max_reward_pct_change_per_block`. Even if the
+///   calendar's `scheduled_supply` curve discontinuously jumps (e.g.
+///   after a long stall), the actually-paid reward smoothly catches up
+///   block-by-block. Both `prev_reward` arguments may be `None` (genesis
+///   + first replay step) — the slew check is skipped in that case.
 pub fn current_reward_with_height(
     p: &EmissionParams,
     genesis_time_ms: u64,
