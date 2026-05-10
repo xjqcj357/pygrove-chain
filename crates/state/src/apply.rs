@@ -135,7 +135,12 @@ pub fn apply_block(
         accounts::save(store, &tx.to, &to_acct);
     }
 
-    // Coinbase: block_reward + total fees → miner's account (header.coinbase).
+    // Coinbase. `block_reward_sat` is now computed by the caller (rpc.rs or
+    // main.rs replay) using `pygrove_consensus::emission::current_reward()` —
+    // a calendar-anchored function of (genesis_time, block.timestamp,
+    // parent.timestamp, minted_so_far). This closes the cadence-mismatch bug:
+    // even if blocks arrive 100× faster than target, each block's reward
+    // shrinks proportionally, so cumulative emission tracks the schedule.
     let miner = AccountId::from_coinbase(&block.header.coinbase);
     let mut miner_acct = accounts::load_or_default(store, &miner);
     let total_minted = block_reward_sat

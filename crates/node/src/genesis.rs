@@ -3,6 +3,10 @@
 use serde::Deserialize;
 use std::path::Path;
 
+fn default_seconds_per_halving() -> u64 {
+    210_000 * 600
+}
+
 #[allow(dead_code)] // many fields plumb through later — accordion eval, sybil guard, etc.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Genesis {
@@ -12,6 +16,12 @@ pub struct Genesis {
     pub target_block_time_ms: u64,
     pub retarget_interval: u64,
     pub halving_interval_base: u64,
+    /// Calendar duration of one halving epoch, in seconds. Drives the
+    /// new calendar-emission schedule (testnet-3+). For Bitcoin-equivalent
+    /// params: `halving_interval_base × target_block_time_ms / 1000`
+    /// = 210000 × 600 = 126_000_000 (≈ 4 years).
+    #[serde(default = "default_seconds_per_halving")]
+    pub seconds_per_halving: u64,
     pub initial_reward_sat: u64,
     pub accordion_epsilon: f64,
     pub accordion_beta_h: f64,

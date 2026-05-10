@@ -41,8 +41,8 @@ pub struct NodeState {
     /// block from the chain log. v0.2 swaps to GroveDB-backed persistence.
     pub state: Mutex<MemState>,
     pub mempool: Arc<Mempool>,
-    /// Per-block coinbase reward in satoshi. Constant in Phase A; the accordion
-    /// + halving schedule kick in once we have retargets working.
+    /// Initial per-block reward in satoshi (`initial_reward_sat` from genesis).
+    /// Pre-halving-1; later epochs derive via `>> epoch`.
     pub block_reward_sat: u128,
     /// Bitcoin's 10-minute target. Used to compute the "planned" emission
     /// curve the explorer / info page draws against the actual one.
@@ -50,6 +50,13 @@ pub struct NodeState {
     /// Halving interval in blocks. Reflected to the client so the planned
     /// curve out to year 127 is properly halving-aware (not linear).
     pub halving_interval_base: u64,
+    /// Calendar-emission params (seconds-per-halving etc). Drives the
+    /// `current_reward()` computation in `try_apply_block`.
+    pub emission: pygrove_consensus::emission::EmissionParams,
+    /// Cumulative supply minted so far. Updated atomically with chainstore
+    /// on each successful `try_apply_block`. Used as input to the next
+    /// block's reward computation.
+    pub minted_so_far: Mutex<u128>,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -528,15 +535,32 @@ fn emission_series(
             halving_interval_base: st.halving_interval_base,
         });
     }
+    // Replay calendar rewards over the entire chain to get correct cumulative
+    // values. For testnet scale this is fine; v0.2 caches per-height running
+    // totals in chainstore.
+    let mut cumulative_by_height: std::collections::HashMap<u64, u128> =
+        std::collections::HashMap::new();
+    let mut running: u128 = 0;
+    cumulative_by_height.insert(0, 0); // genesis pays 0
+    for i in 1..all.len() {
+        let b = &all[i];
+        let parent_ts = all[i - 1].header.timestamp_ms;
+        let reward = pygrove_consensus::emission::current_reward(
+            &st.emission,
+            st.genesis_time_ms,
+            b.header.timestamp_ms,
+            parent_ts,
+            running,
+        );
+        running = running.saturating_add(reward);
+        cumulative_by_height.insert(b.header.height, running);
+    }
     // Stride so we return ~`points` samples evenly across the window.
     let stride = (in_window.len() / points).max(1);
     let mut samples = Vec::with_capacity(points + 2);
     for (i, b) in in_window.iter().enumerate() {
         if i % stride == 0 {
-            // Phase A pre-halving: minted = height × reward (genesis pays 0).
-            // Post-halving accounting lives in the reflect subtree; for now
-            // the simple formula holds for testnet-2's early period.
-            let minted = (b.header.height as u128) * st.block_reward_sat;
+            let minted = *cumulative_by_height.get(&b.header.height).unwrap_or(&0);
             samples.push(EmissionPoint {
                 height: b.header.height,
                 timestamp_ms: b.header.timestamp_ms,
@@ -544,15 +568,13 @@ fn emission_series(
             });
         }
     }
-    // Always include the most recent block so the chart's right edge is
-    // exact, not stride-rounded.
     let last = in_window.last().unwrap();
     let last_h = last.header.height;
     if samples.last().map(|s| s.height) != Some(last_h) {
         samples.push(EmissionPoint {
             height: last_h,
             timestamp_ms: last.header.timestamp_ms,
-            minted_sat: (last_h as u128) * st.block_reward_sat,
+            minted_sat: *cumulative_by_height.get(&last_h).unwrap_or(&0),
         });
     }
     Ok(EmissionSeriesResp {
@@ -885,17 +907,29 @@ pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
             hex::encode(computed_witness_root)
         );
     }
-    // 6. Apply state transitions. Genesis (height 0) doesn't pay block reward —
-    //    it would mint to the headline-derived address, which nobody owns.
-    let reward = if hdr.height == 0 {
-        0
-    } else {
-        st.block_reward_sat
+    // 6. Apply state transitions. Reward is calendar-anchored: a block's
+    //    coinbase pays the delta between scheduled supply at its timestamp
+    //    and what's already been minted, capped per-block. Genesis (height 0)
+    //    earns zero by construction (block_timestamp_ms == genesis_time_ms).
+    let parent_ts = match st.store.tip()? {
+        Some(b) => b.header.timestamp_ms,
+        None => st.genesis_time_ms,
     };
+    let minted = *st.minted_so_far.lock().unwrap();
+    let reward = pygrove_consensus::emission::current_reward(
+        &st.emission,
+        st.genesis_time_ms,
+        hdr.timestamp_ms,
+        parent_ts,
+        minted,
+    );
     let mut state = st.state.lock().unwrap();
     let out = pygrove_state::apply_block(&mut *state, block, reward)
         .map_err(|e| anyhow::anyhow!("apply_block: {e}"))?;
     drop(state);
+    // Track cumulative emission. Order matters: only after apply_block
+    // returns Ok do we credit the cumulative counter.
+    *st.minted_so_far.lock().unwrap() = minted.saturating_add(reward);
     // 7. Drop confirmed txs from the mempool. Computed *after* apply because
     //    apply uses tx_body_hash, and only after success do we want to evict.
     let confirmed: Vec<[u8; 32]> = block.body.txs.iter().map(|t| t.body_hash()).collect();
