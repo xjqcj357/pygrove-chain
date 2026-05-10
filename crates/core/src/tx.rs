@@ -110,6 +110,36 @@ pub enum TxCall {
         /// any attester (rarely useful, but explicit).
         coordinators: Vec<AccountId>,
     },
+    /// DLA-shape attestation: component-pedigree provenance for
+    /// supply-chain artifacts. Same primitive as `AttestRound` but
+    /// the schema is defense-acquisition-friendly: lot_id, supplier,
+    /// CAGE code, attestation authority. A 2030 logistics auditor can
+    /// reproduce a 2027 component's full chain of custody bit-exactly
+    /// against the committed attestations.
+    ///
+    /// Roadmap #7. Raytheon flagship (the "DLA shape" — same primitive,
+    /// different schema). Coordinator authority shares the same
+    /// `RegisterAttestCoordinator` registry as `AttestRound`, scoped
+    /// by `job_id` (here interpreted as the part-program identifier).
+    AttestPedigree {
+        /// Stable identifier for the supply-chain program (e.g. a
+        /// part-number hash: `blake3(part_number || program_id)`).
+        /// Reuses the `AttestRound` authority registry — calling code
+        /// distinguishes FL jobs from supply-chain programs by the
+        /// content of `job_id`.
+        job_id: [u8; 32],
+        /// Stable identifier for the manufacturing lot.
+        lot_id: [u8; 16],
+        /// Hash of the supplier's identity record (e.g.
+        /// `blake3(supplier_name || cage_code || dunns)`).
+        supplier: [u8; 32],
+        /// Commercial and Government Entity code, 5 ASCII chars.
+        /// Validated as `[A-Z0-9]{5}` at apply time.
+        cage_code: [u8; 5],
+        /// Hash of the attestation authority's identity (the
+        /// certifying body, e.g. DCMA / NIST).
+        attestation_authority: [u8; 32],
+    },
 }
 
 /// The body of a transaction — everything that gets signed.
@@ -217,10 +247,24 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             // signers who supply the same set in different orders
             // produce the same signing hash.
             let mut ids: Vec<&AccountId> = coordinators.iter().collect();
-            ids.sort_by(|a, b| a.0.cmp(&b.0));
+            ids.sort_by_key(|a| a.0);
             for id in ids {
                 h.update(&id.0);
             }
+        }
+        TxCall::AttestPedigree {
+            job_id,
+            lot_id,
+            supplier,
+            cage_code,
+            attestation_authority,
+        } => {
+            h.update(&[6u8]);
+            h.update(job_id);
+            h.update(lot_id);
+            h.update(supplier);
+            h.update(cage_code);
+            h.update(attestation_authority);
         }
     }
 }

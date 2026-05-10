@@ -45,9 +45,10 @@ pub struct PendingCryptoUpgrade {
 }
 
 /// Coordinator-authority registry for an FL `job_id`. Once committed via a
-/// `RegisterAttestCoordinator` tx, subsequent `AttestRound` txs for the
-/// same `job_id` must come from one of the listed accounts. Stored under
-/// `Subtree::Meta` at key `[ATTEST_AUTH_KEY_PREFIX || job_id]` (CBOR-encoded).
+/// `RegisterAttestCoordinator` tx, subsequent `AttestRound` (and
+/// `AttestPedigree`) txs for the same `job_id` must come from one of the
+/// listed accounts. Stored under `Subtree::Meta` at key
+/// `[ATTEST_AUTH_KEY_PREFIX || job_id]` (CBOR-encoded).
 ///
 /// Roadmap #6: this is the v0.4 wedge — the registry exists, AttestRound
 /// validates against it. In v0.5 the registration tx itself requires a
@@ -58,6 +59,46 @@ pub struct CoordinatorAuthority {
     pub job_id: [u8; 32],
     pub coordinators: Vec<[u8; 20]>,
     pub registered_at_height: u64,
+}
+
+/// DLA-shape supply-chain pedigree record. Same storage cadence as
+/// `AttestRecord`: keyed by `(job_id, lot_id)` so a 2030 auditor can
+/// reproduce a 2027 component's chain of custody bit-exactly.
+///
+/// Roadmap #7. Raytheon flagship (component-pedigree variant of
+/// `AttestRound`). Reuses the `Subtree::Attest` subtree; key prefix
+/// distinguishes pedigree records from FL-round records.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PedigreeRecord {
+    pub job_id: [u8; 32],
+    pub lot_id: [u8; 16],
+    pub supplier: [u8; 32],
+    pub cage_code: [u8; 5],
+    pub attestation_authority: [u8; 32],
+    pub attester: [u8; 20],
+    pub block_height: u64,
+    pub block_timestamp_ms: u64,
+}
+
+/// Key prefix for pedigree records in `Subtree::Attest`.
+/// Full key: `[PEDIGREE_KEY_PREFIX || job_id || lot_id]` (4 + 32 + 16 = 52 bytes).
+/// Distinguishes from `AttestRound` records (40 bytes, no prefix).
+pub const PEDIGREE_KEY_PREFIX: &[u8] = b"ped/";
+
+/// Build the `Subtree::Attest` storage key for a pedigree record.
+pub fn pedigree_key(job_id: &[u8; 32], lot_id: &[u8; 16]) -> [u8; 52] {
+    let mut key = [0u8; 52];
+    key[..4].copy_from_slice(PEDIGREE_KEY_PREFIX);
+    key[4..36].copy_from_slice(job_id);
+    key[36..].copy_from_slice(lot_id);
+    key
+}
+
+/// CAGE codes are 5-character alphanumeric identifiers per DoD 4100.39-M.
+/// Pedigree apply rejects anything else.
+fn is_valid_cage(cage: &[u8; 5]) -> bool {
+    cage.iter()
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// Key prefix for coordinator-authority records in `Subtree::Meta`.
@@ -126,6 +167,8 @@ pub enum ApplyError {
         "tx[{idx}]: AttestRound from account not in coordinator authority registry for job_id"
     )]
     AttestCoordinatorNotAuthorized { idx: usize },
+    #[error("tx[{idx}]: AttestPedigree cage_code must be 5 ASCII chars [A-Z0-9]")]
+    PedigreeCageCodeInvalid { idx: usize },
     #[error("coinbase reward overflow")]
     CoinbaseOverflow,
 }
@@ -266,6 +309,42 @@ pub fn apply_block(
                 let key = attest_auth_key(job_id);
                 store.put(Subtree::Meta, &key, &buf);
             }
+            TxCall::AttestPedigree {
+                job_id,
+                lot_id,
+                supplier,
+                cage_code,
+                attestation_authority,
+            } => {
+                // Roadmap #7: DLA-shape supply-chain provenance.
+                // Validate CAGE code as 5 ASCII alphanumeric chars.
+                if !is_valid_cage(cage_code) {
+                    return Err(ApplyError::PedigreeCageCodeInvalid { idx: i });
+                }
+                // Coordinator authority registry shared with AttestRound.
+                if let Some(authority) = load_attest_authority(store, job_id) {
+                    if !authority.coordinators.is_empty()
+                        && !authority.coordinators.contains(&tx.from_account.0)
+                    {
+                        return Err(ApplyError::AttestCoordinatorNotAuthorized { idx: i });
+                    }
+                }
+                let record = PedigreeRecord {
+                    job_id: *job_id,
+                    lot_id: *lot_id,
+                    supplier: *supplier,
+                    cage_code: *cage_code,
+                    attestation_authority: *attestation_authority,
+                    attester: tx.from_account.0,
+                    block_height: block.header.height,
+                    block_timestamp_ms: block.header.timestamp_ms,
+                };
+                let mut buf = Vec::new();
+                ciborium::ser::into_writer(&record, &mut buf)
+                    .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
+                let key = pedigree_key(job_id, lot_id);
+                store.put(Subtree::Attest, &key, &buf);
+            }
             TxCall::UpgradeCrypto {
                 target_height,
                 sig_algo,
@@ -365,7 +444,8 @@ fn validate_tx(
         // subtrees instead of moving balance.
         TxCall::UpgradeCrypto { .. }
         | TxCall::AttestRound { .. }
-        | TxCall::RegisterAttestCoordinator { .. } => (
+        | TxCall::RegisterAttestCoordinator { .. }
+        | TxCall::AttestPedigree { .. } => (
             tx.from_account, // self-transfer of zero so the apply pass exists
             0u128,
         ),
@@ -778,6 +858,105 @@ mod tests {
             },
         };
         apply_block(&mut store, &block_c, 50).expect("alice attests successfully");
+    }
+
+    /// Roadmap #7: DLA-shape pedigree attestation. Same authority gate as
+    /// AttestRound; record lands in Subtree::Attest under a distinct
+    /// key prefix so it doesn't collide with FL-round records.
+    #[test]
+    fn attest_pedigree_writes_record_and_validates_cage() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+        let job_id = [0x11; 32]; // not registered → open to any attester
+        let lot_id = [0x22; 16];
+
+        // --- Block A: valid CAGE code "1ABC2".
+        let mut tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::AttestPedigree {
+                job_id,
+                lot_id,
+                supplier: [0x33; 32],
+                cage_code: *b"1ABC2",
+                attestation_authority: [0x44; 32],
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let sig = crypto::sign(3, &alice_sk, &tx.signing_hash()).unwrap();
+        let witness = Witness {
+            sig_algo: 3,
+            sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        tx.witness_hash = witness.hash();
+        let block_a = Block {
+            header: empty_header(),
+            body: BlockBody {
+                txs: vec![tx],
+                witnesses: vec![witness],
+            },
+        };
+        apply_block(&mut store, &block_a, 50).expect("valid pedigree applies");
+
+        // Record landed under the distinguishing pedigree-key prefix.
+        let key = pedigree_key(&job_id, &lot_id);
+        let raw = store.get(Subtree::Attest, &key).expect("pedigree record");
+        let rec: PedigreeRecord = ciborium::de::from_reader(&raw[..]).unwrap();
+        assert_eq!(rec.job_id, job_id);
+        assert_eq!(rec.lot_id, lot_id);
+        assert_eq!(&rec.cage_code, b"1ABC2");
+        assert_eq!(rec.attester, alice.0);
+
+        // --- Block B: invalid CAGE code "abcde" (lowercase) → rejected.
+        let mut bad_tx = TxBody {
+            nonce: 1,
+            from_account: alice,
+            call: TxCall::AttestPedigree {
+                job_id,
+                lot_id: [0x55; 16],
+                supplier: [0x33; 32],
+                cage_code: *b"abcde", // lowercase, not allowed
+                attestation_authority: [0x44; 32],
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let bad_sig = crypto::sign(3, &alice_sk, &bad_tx.signing_hash()).unwrap();
+        let bad_witness = Witness {
+            sig_algo: 3,
+            sig: bad_sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        bad_tx.witness_hash = bad_witness.hash();
+        let mut header_b = empty_header();
+        header_b.height = 2;
+        let block_b = Block {
+            header: header_b,
+            body: BlockBody {
+                txs: vec![bad_tx],
+                witnesses: vec![bad_witness],
+            },
+        };
+        assert!(matches!(
+            apply_block(&mut store, &block_b, 50),
+            Err(ApplyError::PedigreeCageCodeInvalid { .. })
+        ));
     }
 
     /// Backward compat: a job_id with no registry stays open to any
