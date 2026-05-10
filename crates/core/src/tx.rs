@@ -15,12 +15,18 @@ pub use crate::address::AccountId;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SigAlgo {
+    /// Falcon-512 / FN-DSA, integer sampler. PoQC headline algorithm.
     Falcon512 = 1,
+    /// SLH-DSA-128s. Cold governance keys (`UpgradeCrypto` signer in mainnet).
     SlhDsa128s = 2,
-    /// Ed25519 — Phase-A bringup placeholder. Tag = 3 explicitly so that an
-    /// `UpgradeCrypto` event can rotate to Falcon-512 without invalidating
-    /// any signed-with-3 history. Not for mainnet.
+    /// Ed25519 — Phase A bringup placeholder. Live on testnet today; rotates
+    /// to Falcon-512 (tag = 1) via `UpgradeCrypto` in Phase B.
     Ed25519 = 3,
+    /// ML-DSA-65 (FIPS 204). Added for the Raytheon FIPS-profile build —
+    /// CMVP-validatable when the underlying primitive ships in `pqc-mldsa`.
+    /// Plumbed via `UpgradeCrypto` so a FIPS-profile chain can rotate
+    /// signature algos without forking the testnet identity.
+    MlDsa65 = 4,
 }
 
 impl SigAlgo {
@@ -29,6 +35,7 @@ impl SigAlgo {
             1 => Some(Self::Falcon512),
             2 => Some(Self::SlhDsa128s),
             3 => Some(Self::Ed25519),
+            4 => Some(Self::MlDsa65),
             _ => None,
         }
     }

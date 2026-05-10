@@ -32,7 +32,7 @@ pub enum CryptoError {
 /// Sign a message under the given algorithm tag.
 pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
     match algo {
-        1 | 2 => Err(CryptoError::NotWired),
+        1 | 2 | 4 => Err(CryptoError::NotWired), // Falcon-512, SLH-DSA-128s, ML-DSA-65
         3 => ed25519_sign(sk, msg),
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
@@ -41,7 +41,7 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
 /// Verify a signature under the given algorithm tag.
 pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoError> {
     match algo {
-        1 | 2 => Err(CryptoError::NotWired),
+        1 | 2 | 4 => Err(CryptoError::NotWired),
         3 => ed25519_verify(pk, sig, msg),
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
@@ -51,12 +51,24 @@ pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoE
 /// accounting and sanity checks before deserializing witness bytes.
 pub fn sizes(algo: u8) -> Option<(usize, usize)> {
     match algo {
-        1 => Some((897, 666)),  // Falcon-512 / FN-DSA
-        2 => Some((32, 7856)),  // SLH-DSA-128s
+        1 => Some((897, 666)),       // Falcon-512 / FN-DSA
+        2 => Some((32, 7856)),       // SLH-DSA-128s
         3 => Some((32, ED_SIG_LEN)), // Ed25519: 32-byte pk, 64-byte sig
+        4 => Some((1952, 3309)),     // ML-DSA-65 (FIPS 204) — sizes per spec
         _ => None,
     }
 }
+
+/// Algorithms approved for FIPS-profile builds (i.e., in `cargo build --features fips`).
+/// Used by `UpgradeCrypto` validation: a governance tx that tries to rotate
+/// to a non-allowlisted algo is rejected at apply time on a FIPS-profile node.
+pub const FIPS_ALLOWLIST_SIG: &[u8] = &[2, 4]; // SLH-DSA-128s, ML-DSA-65
+pub const FIPS_ALLOWLIST_HASH: &[u8] = &[3];   // SHA3-512
+
+/// Algorithms approved on the default (testnet) build. Wider — includes
+/// the Phase A bringup primitives.
+pub const DEFAULT_ALLOWLIST_SIG: &[u8] = &[1, 2, 3, 4];
+pub const DEFAULT_ALLOWLIST_HASH: &[u8] = &[1, 2, 3];
 
 /// Generate a fresh Ed25519 keypair. Returns `(secret_key_32, public_key_32)`.
 pub fn ed25519_keypair<R: CryptoRng + RngCore>(rng: &mut R) -> ([u8; 32], [u8; 32]) {

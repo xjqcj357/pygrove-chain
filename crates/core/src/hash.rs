@@ -15,8 +15,15 @@ pub type Digest64 = [u8; 64];
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashAlgo {
+    /// Blake3-XOF-512. Default in testnet, fast, IETF-RFC-99-track but not
+    /// FIPS-validated as of FIPS 140-3.
     Blake3Xof512 = 1,
+    /// SHAKE256 from FIPS 202 — used for state subtree inner hashes.
     Shake256 = 2,
+    /// SHA3-512 (FIPS 202). Plumbed for the Raytheon FIPS-profile build —
+    /// CMVP-validatable today via existing approved-module SHA3
+    /// implementations. Activated in a FIPS chain via `UpgradeCrypto`.
+    Sha3_512 = 3,
 }
 
 impl HashAlgo {
@@ -24,6 +31,7 @@ impl HashAlgo {
         match b {
             1 => Some(Self::Blake3Xof512),
             2 => Some(Self::Shake256),
+            3 => Some(Self::Sha3_512),
             _ => None,
         }
     }
