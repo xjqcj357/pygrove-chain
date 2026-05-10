@@ -14,6 +14,9 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 ciborium = { workspace = true }
+# Used for governance-proof payload hashes
+# (upgrade_crypto_gov_payload, register_attest_gov_payload, ...).
+blake3 = { workspace = true }
 
 [dev-dependencies]
 rand_core = { workspace = true, features = ["getrandom"] }

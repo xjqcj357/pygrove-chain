@@ -74,6 +74,192 @@ pub fn load_latest_reflection(store: &dyn StateStore) -> Option<Reflection> {
     ciborium::de::from_reader(&bytes[..]).ok()
 }
 
+/// One member of the governance committee. Each member has a signer-id
+/// (arbitrary opaque), a sig_algo, and a pubkey blob. The signer-id is
+/// what `GovernanceSig` references — the algo + pubkey come from this
+/// record at verify time.
+///
+/// Today the committee is set at genesis (or bootstrap-set by the first
+/// `SetGovernance` tx if missing). Future rotations swap members via a
+/// `SetGovernance` proof signed by the current threshold-many members.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct GovernanceSigner {
+    pub signer_id: [u8; 32],
+    pub sig_algo: u8,
+    #[serde(with = "serde_bytes")]
+    pub pubkey: Vec<u8>,
+}
+
+/// The active governance config. Committed to `Subtree::Meta` at key
+/// `b"governance"`. A k-of-N threshold-signature requirement for
+/// `UpgradeCrypto`, `RegisterAttestCoordinator`, and future
+/// `SetGovernance` updates.
+///
+/// **Today**, members carry their pubkeys directly (Ed25519 / Falcon).
+/// **Mainnet**, members will be 2-of-3 SLH-DSA-128s with HSM custody;
+/// the wire format is unchanged — only the `sig_algo` field switches.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct GovernanceConfig {
+    pub epoch: u64,
+    pub threshold: u32,
+    pub signers: Vec<GovernanceSigner>,
+}
+
+impl GovernanceConfig {
+    /// Validates the config is internally well-formed.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.signers.is_empty() {
+            return Err("governance: signers cannot be empty");
+        }
+        if self.threshold == 0 {
+            return Err("governance: threshold must be > 0");
+        }
+        if (self.threshold as usize) > self.signers.len() {
+            return Err("governance: threshold > signers.len()");
+        }
+        // Duplicate signer_ids are not allowed.
+        let mut seen: std::collections::BTreeSet<&[u8; 32]> =
+            std::collections::BTreeSet::new();
+        for s in &self.signers {
+            if !seen.insert(&s.signer_id) {
+                return Err("governance: duplicate signer_id");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A single signature from one governance member.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct GovernanceSig {
+    pub signer_id: [u8; 32],
+    #[serde(with = "serde_bytes")]
+    pub sig: Vec<u8>,
+}
+
+/// A k-of-N threshold-signature proof. The verifier walks the
+/// `signatures` vec, looks up each `signer_id` in the active
+/// [`GovernanceConfig`], verifies the signature against the
+/// caller-supplied 32-byte message hash, and accepts the proof when
+/// distinct-signer verifications meet `threshold`.
+///
+/// Duplicate `signer_id`s in the proof count once. Unknown signers are
+/// silently dropped (not a hard failure — lets the proof tolerate stale
+/// committee snapshots).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct GovernanceProof {
+    pub signatures: Vec<GovernanceSig>,
+}
+
+/// Load the active governance config, or `None` if the chain is in
+/// bootstrap mode (no config committed yet).
+pub fn load_governance(store: &dyn StateStore) -> Option<GovernanceConfig> {
+    let bytes = store.get(Subtree::Meta, b"governance")?;
+    ciborium::de::from_reader(&bytes[..]).ok()
+}
+
+/// Verify a [`GovernanceProof`] reaches `cfg.threshold` distinct valid
+/// signatures over `msg`. Returns `Ok(())` on success or a specific
+/// error variant on failure.
+pub fn verify_governance_proof(
+    cfg: &GovernanceConfig,
+    proof: &GovernanceProof,
+    msg: &[u8; 32],
+) -> Result<(), GovernanceError> {
+    if (proof.signatures.len() as u32) < cfg.threshold {
+        return Err(GovernanceError::BelowThreshold {
+            got: proof.signatures.len() as u32,
+            need: cfg.threshold,
+        });
+    }
+    let mut seen: std::collections::BTreeSet<[u8; 32]> = std::collections::BTreeSet::new();
+    let mut verified: u32 = 0;
+    for sig in &proof.signatures {
+        if !seen.insert(sig.signer_id) {
+            continue; // duplicate signer_id, counts once
+        }
+        let signer = match cfg.signers.iter().find(|s| s.signer_id == sig.signer_id) {
+            Some(s) => s,
+            None => continue, // unknown signer, ignored (not failure)
+        };
+        if crypto::verify(signer.sig_algo, &signer.pubkey, &sig.sig, msg).is_ok() {
+            verified += 1;
+            if verified >= cfg.threshold {
+                return Ok(());
+            }
+        }
+    }
+    Err(GovernanceError::BelowThreshold {
+        got: verified,
+        need: cfg.threshold,
+    })
+}
+
+/// Canonical signing payload for an `UpgradeCrypto` governance proof.
+/// Domain-tagged so a sig over one governance action cannot be replayed
+/// against another.
+pub fn upgrade_crypto_gov_payload(
+    target_height: u64,
+    sig_algo: u8,
+    hash_algo: u8,
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"PGgov:upgrade\x00");
+    h.update(&target_height.to_le_bytes());
+    h.update(&[sig_algo, hash_algo]);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(h.finalize().as_bytes());
+    out
+}
+
+/// Canonical signing payload for a `RegisterAttestCoordinator`
+/// governance proof. Coordinator list is sorted by `AccountId` bytes
+/// before hashing so order-independent.
+pub fn register_attest_gov_payload(
+    job_id: &[u8; 32],
+    coordinators: &[AccountId],
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"PGgov:regattest\x00");
+    h.update(job_id);
+    h.update(&(coordinators.len() as u32).to_le_bytes());
+    let mut ids: Vec<&AccountId> = coordinators.iter().collect();
+    ids.sort_by_key(|a| a.0);
+    for id in ids {
+        h.update(&id.0);
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(h.finalize().as_bytes());
+    out
+}
+
+/// Canonical signing payload for a `SetGovernance` proof. Includes the
+/// CBOR-canonical encoding of the new config so any future rotation is
+/// bound to the exact payload it authorized.
+pub fn set_governance_gov_payload(new_config: &GovernanceConfig) -> [u8; 32] {
+    let mut buf = Vec::new();
+    // Deterministic CBOR. ciborium isn't strictly canonical-CBOR
+    // out of the box, but for fixed-shape structs the encoding is
+    // stable across calls — good enough for a domain-tagged payload.
+    let _ = ciborium::ser::into_writer(new_config, &mut buf);
+    let mut h = blake3::Hasher::new();
+    h.update(b"PGgov:setgov\x00");
+    h.update(&(buf.len() as u32).to_le_bytes());
+    h.update(&buf);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(h.finalize().as_bytes());
+    out
+}
+
+/// Errors specific to the governance threshold path. Surfaced from
+/// `verify_governance_proof` and re-wrapped into [`ApplyError`] at the
+/// call sites.
+#[derive(Debug, Error)]
+pub enum GovernanceError {
+    #[error("governance proof below threshold: got {got}, need {need}")]
+    BelowThreshold { got: u32, need: u32 },
+}
+
 /// Load the reflection record for a specific block height. Returns
 /// `None` if that block hasn't been applied yet.
 pub fn load_reflection_at(store: &dyn StateStore, height: u64) -> Option<Reflection> {
@@ -209,6 +395,12 @@ pub enum ApplyError {
     AttestCoordinatorNotAuthorized { idx: usize },
     #[error("tx[{idx}]: AttestPedigree cage_code must be 5 ASCII chars [A-Z0-9]")]
     PedigreeCageCodeInvalid { idx: usize },
+    #[error("tx[{idx}]: governance proof required but missing")]
+    GovernanceProofMissing { idx: usize },
+    #[error("tx[{idx}]: governance proof failed verification: {reason}")]
+    GovernanceProofInvalid { idx: usize, reason: String },
+    #[error("tx[{idx}]: governance config is malformed: {reason}")]
+    GovernanceConfigInvalid { idx: usize, reason: String },
     #[error("coinbase reward overflow")]
     CoinbaseOverflow,
 }
@@ -303,6 +495,9 @@ pub fn apply_block(
                 model_hash,
                 dp_epsilon_milli,
             } => {
+                // No governance proof on AttestRound — gov gates the
+                // *registry* update via RegisterAttestCoordinator below,
+                // not the per-round attestation itself.
                 // Roadmap #6: if a coordinator-authority registry exists
                 // for this job_id, the tx's from_account must be in it.
                 // Jobs without a registry are open (testnet default).
@@ -334,10 +529,30 @@ pub fn apply_block(
             TxCall::RegisterAttestCoordinator {
                 job_id,
                 coordinators,
+                gov_proof,
             } => {
-                // Roadmap #6 stub: any account can register an authority
-                // today. v0.5 lands the 2-of-3 SLH-DSA governance
-                // threshold gate (same staging pattern as UpgradeCrypto).
+                // If governance is configured, require a k-of-N proof
+                // over the canonical (job_id, sorted coordinators)
+                // payload. Bootstrap mode (no governance committed)
+                // accepts any signer — preserves the v0.4 testnet-3
+                // behavior until SetGovernance is published.
+                if let Some(cfg) = load_governance(store) {
+                    if gov_proof.is_empty() {
+                        return Err(ApplyError::GovernanceProofMissing { idx: i });
+                    }
+                    let proof: GovernanceProof = ciborium::de::from_reader(&gov_proof[..])
+                        .map_err(|e| ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: format!("decode: {e}"),
+                        })?;
+                    let payload = register_attest_gov_payload(job_id, coordinators);
+                    verify_governance_proof(&cfg, &proof, &payload).map_err(|e| {
+                        ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: e.to_string(),
+                        }
+                    })?;
+                }
                 let record = CoordinatorAuthority {
                     job_id: *job_id,
                     coordinators: coordinators.iter().map(|id| id.0).collect(),
@@ -389,6 +604,7 @@ pub fn apply_block(
                 target_height,
                 sig_algo,
                 hash_algo,
+                gov_proof,
             } => {
                 // FIPS-profile gate (#5 on the sprint roadmap). On a node built
                 // with `cargo build --features fips`, `pygrove_crypto::allowed_*`
@@ -409,11 +625,31 @@ pub fn apply_block(
                         hash_algo: *hash_algo,
                     });
                 }
-                // Stub: any account can announce a rotation today; the
-                // governance-key threshold check lands with the SLH-DSA
-                // wiring (DARPA C1, Raytheon FIPS path). Recorded so the
-                // chain has an observable rotation event for testnet
-                // exercises.
+                // Governance threshold gate. Same pattern as
+                // RegisterAttestCoordinator: bootstrap (no config) →
+                // open; configured → require k-of-N proof over the
+                // upgrade_crypto_gov_payload hash.
+                if let Some(cfg) = load_governance(store) {
+                    if gov_proof.is_empty() {
+                        return Err(ApplyError::GovernanceProofMissing { idx: i });
+                    }
+                    let proof: GovernanceProof = ciborium::de::from_reader(&gov_proof[..])
+                        .map_err(|e| ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: format!("decode: {e}"),
+                        })?;
+                    let payload =
+                        upgrade_crypto_gov_payload(*target_height, *sig_algo, *hash_algo);
+                    verify_governance_proof(&cfg, &proof, &payload).map_err(|e| {
+                        ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: e.to_string(),
+                        }
+                    })?;
+                }
+                // Recorded so the chain has an observable rotation
+                // event. Pre-governance: any account can announce
+                // (bootstrap); post-governance: k-of-N gates.
                 let pending = PendingCryptoUpgrade {
                     target_height: *target_height,
                     sig_algo: *sig_algo,
@@ -424,6 +660,50 @@ pub fn apply_block(
                 ciborium::ser::into_writer(&pending, &mut buf)
                     .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
                 store.put(Subtree::Meta, b"upgrade_crypto", &buf);
+            }
+            TxCall::SetGovernance {
+                config_cbor,
+                gov_proof,
+            } => {
+                // Decode + validate the new config first; bad configs
+                // are refused even in bootstrap.
+                let new_cfg: GovernanceConfig =
+                    ciborium::de::from_reader(&config_cbor[..]).map_err(|e| {
+                        ApplyError::GovernanceConfigInvalid {
+                            idx: i,
+                            reason: format!("decode: {e}"),
+                        }
+                    })?;
+                new_cfg
+                    .validate()
+                    .map_err(|reason| ApplyError::GovernanceConfigInvalid {
+                        idx: i,
+                        reason: reason.into(),
+                    })?;
+                // If a config exists already, require k-of-N proof
+                // from the current set over the new config's payload.
+                // Bootstrap (no existing config) accepts any signer.
+                if let Some(current) = load_governance(store) {
+                    if gov_proof.is_empty() {
+                        return Err(ApplyError::GovernanceProofMissing { idx: i });
+                    }
+                    let proof: GovernanceProof = ciborium::de::from_reader(&gov_proof[..])
+                        .map_err(|e| ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: format!("decode: {e}"),
+                        })?;
+                    let payload = set_governance_gov_payload(&new_cfg);
+                    verify_governance_proof(&current, &proof, &payload).map_err(|e| {
+                        ApplyError::GovernanceProofInvalid {
+                            idx: i,
+                            reason: e.to_string(),
+                        }
+                    })?;
+                }
+                let mut buf = Vec::new();
+                ciborium::ser::into_writer(&new_cfg, &mut buf)
+                    .map_err(|_| ApplyError::WitnessHashMismatch(i))?;
+                store.put(Subtree::Meta, b"governance", &buf);
             }
             _ => {}
         }
@@ -554,7 +834,8 @@ fn validate_tx(
         TxCall::UpgradeCrypto { .. }
         | TxCall::AttestRound { .. }
         | TxCall::RegisterAttestCoordinator { .. }
-        | TxCall::AttestPedigree { .. } => (
+        | TxCall::AttestPedigree { .. }
+        | TxCall::SetGovernance { .. } => (
             tx.from_account, // self-transfer of zero so the apply pass exists
             0u128,
         ),
@@ -808,6 +1089,7 @@ mod tests {
                 target_height: 1_000_000,
                 sig_algo: 99, // not in DEFAULT_ALLOWLIST_SIG
                 hash_algo: 1,
+                gov_proof: Vec::new(),
             },
             fee_sat: 0,
             gas_limit: 0,
@@ -877,6 +1159,7 @@ mod tests {
             call: TxCall::RegisterAttestCoordinator {
                 job_id,
                 coordinators: vec![alice],
+                gov_proof: Vec::new(),
             },
             fee_sat: 0,
             gas_limit: 0,
@@ -1123,6 +1406,7 @@ mod tests {
                 target_height: 3,
                 sig_algo: 1, // Falcon-512
                 hash_algo: 1,
+                gov_proof: Vec::new(),
             },
             fee_sat: 0,
             gas_limit: 0,
@@ -1226,6 +1510,196 @@ mod tests {
             },
         };
         apply_block(&mut store, &block, 50).expect("open job accepts any attester");
+    }
+
+    /// k-of-N governance threshold sig: bootstrap install, then enforce.
+    ///
+    /// 1. No governance exists. Alice's `SetGovernance` (with empty
+    ///    proof) installs a 2-of-3 config — accepted as bootstrap.
+    /// 2. Alice tries an `UpgradeCrypto` with no proof — rejected
+    ///    (`GovernanceProofMissing`).
+    /// 3. Alice signs the gov payload with her gov key, but that's
+    ///    1-of-3 — rejected (`GovernanceProofInvalid` /
+    ///    `BelowThreshold`).
+    /// 4. Two of three gov keys sign — accepted, pending record lands.
+    #[test]
+    fn governance_threshold_gates_upgrade_crypto() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+
+        // Alice as the tx sender. Three gov keypairs are a separate
+        // namespace (the gov committee, not Alice).
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+
+        let (g1_sk, g1_pk) = crypto::ed25519_keypair(&mut rng);
+        let (g2_sk, g2_pk) = crypto::ed25519_keypair(&mut rng);
+        let (_g3_sk, g3_pk) = crypto::ed25519_keypair(&mut rng);
+        let g1_id = [0xA1u8; 32];
+        let g2_id = [0xA2u8; 32];
+        let g3_id = [0xA3u8; 32];
+
+        let gov_cfg = GovernanceConfig {
+            epoch: 1,
+            threshold: 2,
+            signers: vec![
+                GovernanceSigner {
+                    signer_id: g1_id,
+                    sig_algo: 3,
+                    pubkey: g1_pk.to_vec(),
+                },
+                GovernanceSigner {
+                    signer_id: g2_id,
+                    sig_algo: 3,
+                    pubkey: g2_pk.to_vec(),
+                },
+                GovernanceSigner {
+                    signer_id: g3_id,
+                    sig_algo: 3,
+                    pubkey: g3_pk.to_vec(),
+                },
+            ],
+        };
+
+        // --- Step 1: bootstrap install via SetGovernance.
+        let mut cbor = Vec::new();
+        ciborium::ser::into_writer(&gov_cfg, &mut cbor).unwrap();
+        let mut set_tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::SetGovernance {
+                config_cbor: cbor,
+                gov_proof: Vec::new(), // bootstrap: empty proof accepted
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let sig = crypto::sign(3, &alice_sk, &set_tx.signing_hash()).unwrap();
+        let witness = Witness {
+            sig_algo: 3,
+            sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        set_tx.witness_hash = witness.hash();
+        let block_install = Block {
+            header: empty_header(),
+            body: BlockBody {
+                txs: vec![set_tx],
+                witnesses: vec![witness],
+            },
+        };
+        apply_block(&mut store, &block_install, 50).expect("bootstrap install");
+        assert!(load_governance(&store).is_some());
+
+        // --- Step 2: UpgradeCrypto WITHOUT proof — rejected.
+        let mk_upgrade_tx = |alice_nonce: u64, gov_proof: Vec<u8>| {
+            let mut tx = TxBody {
+                nonce: alice_nonce,
+                from_account: alice,
+                call: TxCall::UpgradeCrypto {
+                    target_height: 1_000,
+                    sig_algo: 1, // Falcon-512 — in DEFAULT_ALLOWLIST_SIG
+                    hash_algo: 1,
+                    gov_proof,
+                },
+                fee_sat: 0,
+                gas_limit: 0,
+                witness_hash: [0u8; 32],
+            };
+            let sig = crypto::sign(3, &alice_sk, &tx.signing_hash()).unwrap();
+            let witness = Witness {
+                sig_algo: 3,
+                sig,
+                pubkey: PubKeyRef::Known(alice),
+            };
+            tx.witness_hash = witness.hash();
+            (tx, witness)
+        };
+        let (no_proof_tx, no_proof_w) = mk_upgrade_tx(1, Vec::new());
+        let mut h2 = empty_header();
+        h2.height = 2;
+        let block_no_proof = Block {
+            header: h2,
+            body: BlockBody {
+                txs: vec![no_proof_tx],
+                witnesses: vec![no_proof_w],
+            },
+        };
+        assert!(matches!(
+            apply_block(&mut store, &block_no_proof, 50),
+            Err(ApplyError::GovernanceProofMissing { .. })
+        ));
+
+        // --- Step 3: 1-of-3 proof — rejected as below threshold.
+        let payload = upgrade_crypto_gov_payload(1_000, 1, 1);
+        let g1_sig = crypto::sign(3, &g1_sk, &payload).unwrap();
+        let proof_1of3 = GovernanceProof {
+            signatures: vec![GovernanceSig {
+                signer_id: g1_id,
+                sig: g1_sig.clone(),
+            }],
+        };
+        let mut proof_cbor = Vec::new();
+        ciborium::ser::into_writer(&proof_1of3, &mut proof_cbor).unwrap();
+        let (low_tx, low_w) = mk_upgrade_tx(1, proof_cbor);
+        let mut h3 = empty_header();
+        h3.height = 3;
+        let block_1of3 = Block {
+            header: h3,
+            body: BlockBody {
+                txs: vec![low_tx],
+                witnesses: vec![low_w],
+            },
+        };
+        assert!(matches!(
+            apply_block(&mut store, &block_1of3, 50),
+            Err(ApplyError::GovernanceProofInvalid { .. })
+        ));
+
+        // --- Step 4: 2-of-3 proof — accepted.
+        let g2_sig = crypto::sign(3, &g2_sk, &payload).unwrap();
+        let proof_2of3 = GovernanceProof {
+            signatures: vec![
+                GovernanceSig {
+                    signer_id: g1_id,
+                    sig: g1_sig,
+                },
+                GovernanceSig {
+                    signer_id: g2_id,
+                    sig: g2_sig,
+                },
+            ],
+        };
+        let mut proof_cbor = Vec::new();
+        ciborium::ser::into_writer(&proof_2of3, &mut proof_cbor).unwrap();
+        let (good_tx, good_w) = mk_upgrade_tx(1, proof_cbor);
+        let mut h4 = empty_header();
+        h4.height = 4;
+        let block_2of3 = Block {
+            header: h4,
+            body: BlockBody {
+                txs: vec![good_tx],
+                witnesses: vec![good_w],
+            },
+        };
+        apply_block(&mut store, &block_2of3, 50).expect("2-of-3 proof accepted");
+        // The pending upgrade should be recorded.
+        let pending_bytes = store.get(Subtree::Meta, b"upgrade_crypto").unwrap();
+        let pending: PendingCryptoUpgrade =
+            ciborium::de::from_reader(&pending_bytes[..]).unwrap();
+        assert_eq!(pending.target_height, 1_000);
+        assert_eq!(pending.sig_algo, 1);
     }
 }
 

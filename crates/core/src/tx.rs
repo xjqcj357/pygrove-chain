@@ -70,6 +70,17 @@ pub enum TxCall {
         target_height: u64,
         sig_algo: u8,
         hash_algo: u8,
+        /// Hex-encoded CBOR of `pygrove_state::GovernanceProof`. Optional
+        /// only while the chain is in bootstrap mode (no governance
+        /// config committed). Once governance is set, every
+        /// `UpgradeCrypto` apply requires a valid k-of-N proof over the
+        /// `upgrade_crypto_gov_payload` hash.
+        ///
+        /// Lives on TxCall as opaque bytes — the `pygrove-core` crate
+        /// can't depend on `pygrove-state` (cycle), so we carry the
+        /// proof as CBOR and let `apply` decode it.
+        #[serde(default, with = "serde_bytes")]
+        gov_proof: Vec<u8>,
     },
     /// Federated-learning round attestation. Commits a hash of an aggregation
     /// round (post-FedAvg model hash + participant set + DP budget) to a
@@ -109,6 +120,26 @@ pub enum TxCall {
         /// this record is committed. An empty list re-opens the job to
         /// any attester (rarely useful, but explicit).
         coordinators: Vec<AccountId>,
+        /// CBOR-encoded governance proof. Same staging pattern as
+        /// `UpgradeCrypto.gov_proof` — bytes so `pygrove-core` doesn't
+        /// reach into `pygrove-state` types.
+        #[serde(default, with = "serde_bytes")]
+        gov_proof: Vec<u8>,
+    },
+    /// Install (bootstrap) or rotate the governance config. The first
+    /// `SetGovernance` tx in a chain's history is accepted with an
+    /// empty `gov_proof` (bootstrap mode); subsequent ones require a
+    /// k-of-N proof from the *current* config over a hash of the *new*
+    /// config (`set_governance_gov_payload`).
+    ///
+    /// `config_cbor` is CBOR(`pygrove_state::GovernanceConfig`). The
+    /// `core` crate can't depend on `state`, so we carry the config as
+    /// bytes and let `apply` decode + validate.
+    SetGovernance {
+        #[serde(with = "serde_bytes")]
+        config_cbor: Vec<u8>,
+        #[serde(default, with = "serde_bytes")]
+        gov_proof: Vec<u8>,
     },
     /// DLA-shape attestation: component-pedigree provenance for
     /// supply-chain artifacts. Same primitive as `AttestRound` but
@@ -219,6 +250,7 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             target_height,
             sig_algo,
             hash_algo,
+            gov_proof: _, // proof excluded from sender-sig hash by design
         } => {
             h.update(&[3u8]);
             h.update(&target_height.to_le_bytes());
@@ -239,6 +271,7 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
         TxCall::RegisterAttestCoordinator {
             job_id,
             coordinators,
+            gov_proof: _, // excluded from sender-sig hash
         } => {
             h.update(&[5u8]);
             h.update(job_id);
@@ -265,6 +298,14 @@ fn hash_call(h: &mut blake3::Hasher, call: &TxCall) {
             h.update(supplier);
             h.update(cage_code);
             h.update(attestation_authority);
+        }
+        TxCall::SetGovernance {
+            config_cbor,
+            gov_proof: _, // excluded from sender-sig hash
+        } => {
+            h.update(&[7u8]);
+            h.update(&(config_cbor.len() as u32).to_le_bytes());
+            h.update(config_cbor);
         }
     }
 }
