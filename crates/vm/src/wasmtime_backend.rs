@@ -76,8 +76,9 @@ impl WasmtimeVm {
         let mut cfg = Config::new();
         cfg.consume_fuel(true);
         // Determinism: turn off any nondeterministic features wasmtime
-        // might add by default.
-        cfg.wasm_threads(false);
+        // might add by default. Threads are gated at the cargo-feature
+        // level (we don't enable wasmtime/threads), so no Config knob is
+        // needed for them in wasmtime 27+.
         cfg.wasm_simd(false);
         cfg.wasm_relaxed_simd(false);
         cfg.wasm_reference_types(true); // needed for many compilers' output
