@@ -355,10 +355,10 @@ mod tests {
                 vote_proto,
             ],
         };
-        assert!(matches!(
-            verify_cert(&c, &cert),
-            Err(FinalityError::DuplicateVote([1u8; 32]))
-        ));
+        match verify_cert(&c, &cert) {
+            Err(FinalityError::DuplicateVote(id)) => assert_eq!(id, [1u8; 32]),
+            other => panic!("expected DuplicateVote, got {other:?}"),
+        }
     }
 
     /// Vote signing-hash is stable: changing any field changes the hash.
