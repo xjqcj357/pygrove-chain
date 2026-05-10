@@ -522,10 +522,11 @@ fn validate_tx(
     })
 }
 
-// The default-build tests rely on `pygrove_crypto::ed25519_keypair`, which
-// only compiles when `--features fips` is OFF. FIPS-build tests live in
-// `tests_fips` below and exercise the allowlist-rejection paths instead.
-#[cfg(all(test, not(feature = "fips")))]
+// State tests use `pygrove_crypto::ed25519_keypair`. We don't expose a `fips`
+// feature on the state crate (see Cargo.toml note); `pygrove-crypto`'s default
+// features include `ed25519`, so this test module always compiles. FIPS-mode
+// dispatch tests live in `pygrove-crypto`.
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::Account;
@@ -1008,20 +1009,3 @@ mod tests {
     }
 }
 
-/// FIPS-profile tests. `pygrove_crypto::ed25519_keypair` is unavailable in
-/// FIPS builds, so we can't construct real signed transactions here. These
-/// tests exercise the static allowlist surface and confirm `UpgradeCrypto`
-/// would reject Ed25519 (sig_algo=3) under a FIPS build's allowlist.
-#[cfg(all(test, feature = "fips"))]
-mod tests_fips {
-    #[test]
-    fn fips_allowlists_active() {
-        assert!(pygrove_crypto::is_fips_build());
-        assert!(!pygrove_crypto::allowed_sig(1)); // Falcon-512 not in FIPS
-        assert!(!pygrove_crypto::allowed_sig(3)); // Ed25519 not in FIPS
-        assert!(pygrove_crypto::allowed_sig(2)); // SLH-DSA-128s
-        assert!(pygrove_crypto::allowed_sig(4)); // ML-DSA-65
-        assert!(pygrove_crypto::allowed_hash(3)); // SHA3-512
-        assert!(!pygrove_crypto::allowed_hash(1)); // Blake3-XOF-512
-    }
-}

@@ -18,9 +18,13 @@ ciborium = { workspace = true }
 [dev-dependencies]
 rand_core = { workspace = true, features = ["getrandom"] }
 
-[features]
-default = []
-# Forwarded to `pygrove-crypto/fips`. Enables FIPS-allowlist enforcement
-# in `UpgradeCrypto` apply: governance rotations to non-FIPS algos are
-# rejected at apply time on a FIPS-profile node.
-fips = ["pygrove-crypto/fips"]
+# Note: there's no `fips` feature here. FIPS gating in `UpgradeCrypto`
+# apply is a runtime call to `pygrove_crypto::allowed_sig()`, which already
+# encodes the build profile of pygrove-crypto. State doesn't need its own
+# feature flag to participate in FIPS enforcement.
+#
+# Forwarding `state/fips` → `crypto/fips` would compile if we also disabled
+# crypto's default features (ed25519 + falcon, which conflict with slh-dsa's
+# signature 2.3.0-pre.x dependency). That refactor isn't worth the
+# complexity for a dispatch surface that's already correctly gated at
+# the crypto layer.
