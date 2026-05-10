@@ -299,4 +299,87 @@ mod tests {
         // = R0/2. So one block earns one halved reward — not the whole half-supply.
         assert_eq!(r, p.initial_reward_sat / 2);
     }
+
+    /// Roadmap #9: calendar-emission cross-platform fixture identity.
+    ///
+    /// Simulates a deterministic sequence of 100 blocks at known intervals,
+    /// computes the per-block reward and minted-so-far progression at each
+    /// step, and asserts that the rolled-up Blake3 hash of the trace
+    /// equals a pinned fixture value. Any future change to the emission
+    /// math — accidental or otherwise — flips the hash and the test
+    /// fails, surfacing the change for review.
+    ///
+    /// Equally important: this test runs on every CI target. u128 math
+    /// is platform-stable, but this test is what proves it.
+    #[test]
+    fn calendar_emission_fixture_identity_100_blocks() {
+        let p = EmissionParams::bitcoin_like();
+        let genesis_time_ms: u64 = 1_000_000_000_000;
+
+        // 100 blocks at deterministic intervals: pattern alternates fast
+        // (60s), target (600s), and slow (1200s) so the proportional cap
+        // and slew limit both exercise. Cycle of 3.
+        let intervals_ms: [u64; 3] = [60_000, 600_000, 1_200_000];
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"PG-emission-fixture-v0.4\x00");
+
+        let mut parent_ts = genesis_time_ms;
+        let mut minted: u128 = 0;
+        let mut prev_reward: Option<u128> = None;
+
+        for h in 1u64..=100 {
+            let interval = intervals_ms[(h as usize - 1) % 3];
+            let block_ts = parent_ts + interval;
+            let reward = current_reward_with_height(
+                &p,
+                genesis_time_ms,
+                block_ts,
+                parent_ts,
+                minted,
+                h,
+                prev_reward,
+            );
+            // Bake (height, block_ts, reward, minted_so_far_after) into the
+            // rolling hash. Big-endian for cross-platform identity.
+            hasher.update(&h.to_be_bytes());
+            hasher.update(&block_ts.to_be_bytes());
+            hasher.update(&reward.to_be_bytes());
+            minted = minted.saturating_add(reward);
+            hasher.update(&minted.to_be_bytes());
+
+            parent_ts = block_ts;
+            prev_reward = Some(reward);
+        }
+        let digest = hasher.finalize();
+
+        // Fixture: the canonical hash. If this assertion fails, either:
+        //   (a) the emission math drifted (review the diff carefully —
+        //       any change here is consensus-breaking on testnet-3), or
+        //   (b) the platform's u128 arithmetic disagrees with x86_64 Linux,
+        //       which would be surprising and worth investigating.
+        //
+        // Update procedure: re-run this test, copy the actual digest from
+        // the failure message, and pin it here in the SAME PR that
+        // changed the emission math. Reviewers must validate the
+        // semantic change before approving.
+        let actual_hex = hex::encode(digest.as_bytes());
+        const EXPECTED_HEX: &str =
+            "8d8c1bd6dab48ce0d80fa00b56b97e09b80f0adfd1ce39c3aa2f44e51bbb8e6f";
+        assert_eq!(
+            actual_hex, EXPECTED_HEX,
+            "calendar-emission fixture digest changed.\n\
+             actual:   {actual_hex}\n\
+             expected: {EXPECTED_HEX}\n\
+             If the emission math intentionally changed, update EXPECTED_HEX\n\
+             to the actual digest in the same PR, with reviewer sign-off."
+        );
+
+        // Sanity: bootstrap_reward_pct=50 means ALL 100 blocks (well below
+        // bootstrap_height=2016) cap at 50% of the era's nominal 50 PYG.
+        // So minted ≤ 100 × 50% × 5e9 = 2.5e11 sat. The proportional cap
+        // suppresses fast blocks further, so we expect < 2.5e11.
+        assert!(minted < 250_000_000_000);
+        assert!(minted > 0);
+    }
 }
