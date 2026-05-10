@@ -6,6 +6,7 @@ members = [
     "crates/consensus",
     "crates/state",
     "crates/vm",
+    "crates/finality",
     "crates/node",
     "crates/gui",
 ]

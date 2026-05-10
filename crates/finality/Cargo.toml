@@ -1,0 +1,19 @@
+[package]
+name = "pygrove-finality"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: BFT finality gadget over the PoW chain"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+pygrove-crypto = { path = "../crypto" }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true, features = ["getrandom"] }

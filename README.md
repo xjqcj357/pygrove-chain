@@ -132,7 +132,8 @@ pygrove-chain/
 │   ├── crypto/      algo dispatch (Ed25519 live, Falcon/SLH-DSA/ML-DSA plumbed)
 │   ├── consensus/   PoW, ASERT-2D, accordion, calendar emission, reflection
 │   ├── state/       in-memory state store with subtree segregation
-│   ├── vm/          placeholder for the WASM contract VM (next sprint)
+│   ├── vm/          WASM contract VM (wasmtime, behind --features wasm)
+│   ├── finality/    BFT finality gadget — committee + votes + cert verify
 │   ├── node/        pygrove-node + pygrove-cli binaries
 │   └── gui/         pygrove-gui Slint desktop wallet
 ├── sim/             Python reference for accordion math + adversarial backtests
@@ -280,15 +281,19 @@ The HTTP server also serves `GET /` (block explorer HTML) and `GET /healthz` (li
 
 There isn't one.
 
-The 90-day sprint plan that lived here had nine items. They've all landed:
+The 90-day sprint plan that lived here had nine items. All landed; their v0.5 follow-ups landed too. The current state:
 
 - **Calendar-emission cross-platform fixture identity** — pinned blake3 digest of a 100-block deterministic trace, [`crates/consensus/src/emission.rs`](crates/consensus/src/emission.rs)
 - **Falcon-512 wiring** — `fn-dsa` 0.1 ported, `sig_algo=1` live, [`crates/crypto/src/falcon.rs`](crates/crypto/src/falcon.rs)
-- **WASM contract VM** — `wasmtime` 27 with fuel-metered execution, [`crates/vm/src/wasmtime_backend.rs`](crates/vm/src/wasmtime_backend.rs) (build with `--features wasm`)
+- **WASM contract VM** — `wasmtime` 27 with fuel-metered execution + `chain_reflect_get` host function reading [`Subtree::Reflect`](crates/state/src/apply.rs), [`crates/vm/src/wasmtime_backend.rs`](crates/vm/src/wasmtime_backend.rs) (build with `--features wasm`)
 - **`--features fips` build profile** — drops Ed25519 + Falcon, gates `UpgradeCrypto` against `FIPS_ALLOWLIST_*`, [`crates/crypto/src/lib.rs`](crates/crypto/src/lib.rs)
 - **AttestRound coordinator authority registry** — per-`job_id` allowlist, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
 - **DLA-shape pedigree attestation** — supply-chain variant (`lot_id` + CAGE code + supplier hash), [`TxCall::AttestPedigree`](crates/core/src/tx.rs)
 - **Mainnet plan** — [`docs/mainnet-plan.md`](docs/mainnet-plan.md), 323 lines covering BFT finality, port architecture, launch-difficulty calibration, governance ceremony, threat model, audit plan
+- **Reflection subtree writes** — every `apply_block` emits a per-block `Reflection` record, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
+- **UpgradeCrypto activation** — pending rotations now actually activate at `target_height`, writing `ActiveCrypto` to `Subtree::Meta`
+- **`pygrove-cli` as real RPC client** — no more stubs; `get-info`, `show-block`, `list-blocks`, `get-balance`, `get-account`, `submit-tx`, `get-mempool`, `emission-series`, `state-root`, `health`
+- **BFT finality gadget** — committee, votes, certs, quorum check, fork-choice helper, [`crates/finality/`](crates/finality/src/lib.rs). N-of-N MVP. BLS aggregation + libp2p transport land with the P2P stack.
 
 Two items deliberately deferred:
 
@@ -308,9 +313,9 @@ Six gates close before mainnet:
 | 3 | Falcon-512 actually wired | ✅ |
 | 4 | Real test coverage (unit + integration + cross-platform fixture identity) | ✅ |
 | 5 | libp2p P2P online | ⬜ separate stack |
-| 6 | BFT finality gadget shipped | ⬜ v1.0 design in [`docs/mainnet-plan.md`](docs/mainnet-plan.md) |
+| 6 | BFT finality gadget shipped | ✅ skeleton + cert verify in [`crates/finality/`](crates/finality/src/lib.rs); BLS aggregation + libp2p transport land with #5 |
 
-Four of six closed. The remaining two (libp2p + BFT finality) are tracked in [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Mainnet launches when both ship and an external review has signed off on the threat model.
+Five of six closed. The remaining one (libp2p P2P) is tracked in [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Mainnet launches when it ships and an external review has signed off on the threat model.
 
 ## Contributing
 
