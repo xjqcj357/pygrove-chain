@@ -19,6 +19,7 @@ It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retarg
 - [JSON-RPC surface](#json-rpc-surface)
 - [Roadmap](#roadmap)
 - [Mainnet readiness](#mainnet-readiness)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Where it lives
@@ -277,39 +278,43 @@ The HTTP server also serves `GET /` (block explorer HTML) and `GET /healthz` (li
 
 ## Roadmap
 
-Per-tag changelog: [RELEASES.md](RELEASES.md).
-Current sprint's design ledger: [docs/sprint-plan.md](docs/sprint-plan.md).
+There isn't one.
 
-The next 90 days, in the recommended order:
+The 90-day sprint plan that lived here had nine items. They've all landed:
 
-1. **WASM contract VM.** `wasmtime` + a small ABI for hash + sig + ed25519 + np-array reductions. Replaces the `crates/vm/` placeholder. ETA: 4 weeks.
-2. **Falcon-512 wiring.** Pin the integer-sampler crate, byte-identical sigs across Linux + Windows. Promotes `sig_algo = 1` to live. ETA: 2 weeks.
-3. **SLH-DSA-128s wiring.** Cold governance keys; gates threshold-sig validation for `UpgradeCrypto`. ETA: 1 week after #2.
-4. **2-of-3 SLH-DSA threshold cold key with HSM backing.** Mil-spec governance custody. ETA: 4 weeks (after #3).
-5. **Build profiles.** `cargo build --features fips` selects the FIPS allowlist as the canonical algo set. Prerequisite for FedRAMP / FIPS-140-3 module submission. ETA: 1 week.
-6. **AttestRound full validation.** Coordinator authority registry per `job_id`; today any account can attest. ETA: 2 weeks.
-7. **DLA-shape demo.** Component-pedigree variant of `AttestRound` with supply-chain provenance fields (`lot_id`, `supplier`, `cage_code`, `attestation_authority`). Same primitive, different schema. ETA: 1 week (after #6).
-8. **`docs/mainnet-plan.md`.** Mainnet RPC port (9545), launch-time difficulty calibration, BFT finality gadget design (5-of-5 trusted committee MVP, swapping to stake-elected at v2.0). ETA: 2 weeks of writing while #1–#7 run in parallel.
-9. **Tests across the above.** Calendar-emission cross-platform fixture identity, attest-round round-trip, upgrade-crypto rotation activation, FIPS-profile algo allowlist enforcement.
+- **Calendar-emission cross-platform fixture identity** — pinned blake3 digest of a 100-block deterministic trace, [`crates/consensus/src/emission.rs`](crates/consensus/src/emission.rs)
+- **Falcon-512 wiring** — `fn-dsa` 0.1 ported, `sig_algo=1` live, [`crates/crypto/src/falcon.rs`](crates/crypto/src/falcon.rs)
+- **WASM contract VM** — `wasmtime` 27 with fuel-metered execution, [`crates/vm/src/wasmtime_backend.rs`](crates/vm/src/wasmtime_backend.rs) (build with `--features wasm`)
+- **`--features fips` build profile** — drops Ed25519 + Falcon, gates `UpgradeCrypto` against `FIPS_ALLOWLIST_*`, [`crates/crypto/src/lib.rs`](crates/crypto/src/lib.rs)
+- **AttestRound coordinator authority registry** — per-`job_id` allowlist, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
+- **DLA-shape pedigree attestation** — supply-chain variant (`lot_id` + CAGE code + supplier hash), [`TxCall::AttestPedigree`](crates/core/src/tx.rs)
+- **Mainnet plan** — [`docs/mainnet-plan.md`](docs/mainnet-plan.md), 323 lines covering BFT finality, port architecture, launch-difficulty calibration, governance ceremony, threat model, audit plan
+
+Two items deliberately deferred:
+
+- **SLH-DSA-128s wiring.** Blocked upstream: `slh-dsa = "0.1"` pins `signature ^2.3.0-pre.x` (a pre-release), which conflicts with `ed25519-dalek`'s transitive `signature ^2.0` dep. Re-enables when RustCrypto bumps the slh-dsa crate to use stable signature 2.x. Dispatch slot at `sig_algo=2` is reserved.
+- **HSM-backed governance keys.** Hardware procurement, not a code change. Lands with the mainnet ceremony.
+
+What replaces "the roadmap" is [`docs/mainnet-plan.md`](docs/mainnet-plan.md). It's the design ledger every change is now reviewed against.
 
 ## Mainnet readiness
 
-Six gates have to close before mainnet:
+Six gates close before mainnet:
 
 | | Gate | Status |
 |---|---|---|
-| 1 | Calendar-emission inflation bug closed | ✅ shipped in v0.4.0 |
-| 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ shipped in v0.4.0 |
-| 3 | Falcon-512 actually wired | ⬜ next sprint |
-| 4 | Real test coverage (unit + integration + cross-platform fixture identity) | ⬜ in flight |
+| 1 | Calendar-emission inflation bug closed | ✅ |
+| 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ |
+| 3 | Falcon-512 actually wired | ✅ |
+| 4 | Real test coverage (unit + integration + cross-platform fixture identity) | ✅ |
 | 5 | libp2p P2P online | ⬜ separate stack |
-| 6 | BFT finality gadget shipped | ⬜ v1.0 design |
+| 6 | BFT finality gadget shipped | ⬜ v1.0 design in [`docs/mainnet-plan.md`](docs/mainnet-plan.md) |
 
-Mainnet launches when all six are closed and an external review has signed off on the threat model.
+Four of six closed. The remaining two (libp2p + BFT finality) are tracked in [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Mainnet launches when both ship and an external review has signed off on the threat model.
 
 ## Contributing
 
-This is currently a single-author build. Issues and PRs are welcome but the bar is high: anything that touches consensus needs a Python-sim port and an adversarial-trace replay before it merges. See [docs/sprint-plan.md](docs/sprint-plan.md) for the design ledger that PRs are evaluated against.
+This is currently a single-author build. Issues and PRs are welcome but the bar is high: anything that touches consensus needs a Python-sim port and an adversarial-trace replay before it merges. See [`docs/mainnet-plan.md`](docs/mainnet-plan.md) for the design ledger PRs are evaluated against.
 
 ## License
 

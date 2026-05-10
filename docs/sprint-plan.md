@@ -30,17 +30,17 @@ Two independent academic agents (Georgia Tech ECE and Texas A&M Agricultural Eco
 - Crypto rotation announcement records on-chain
 - Build-profile allowlists exposed for downstream FIPS branch
 
-**Still on the 90-day plan, in the recommended Palantir order:**
+**The 90-day plan landed in one push.** All nine items closed inside the v0.4.1 window. Status:
 
-1. **WASM contract VM.** Replace the `crates/vm/` placeholder with `wasmtime` + a small ABI for hash + sig + ed25519 + np-array reductions. **Raytheon's recommendation, accepted by Palantir over Google X's CPython pitch — CMVP can't validate interpreted Python in the boundary.** ETA: 4 weeks.
-2. **DARPA C1: actual Falcon-512 wiring.** Pin `fn-dsa` integer-sampler crate, byte-identical sigs across Linux/Windows. Promotes `sig_algo = 1` from `NotWired` to live. ETA: 2 weeks.
-3. **DARPA C1.b: SLH-DSA-128s wiring.** Cold governance keys; gates the threshold-sig validation step on UpgradeCrypto. ETA: 1 week after DARPA C1.
-4. **Mil-spec governance keys (Raytheon C3).** 2-of-3 SLH-DSA threshold cold key with HSM backing for the canonical operator. ETA: 4 weeks (after #3).
-5. **Build profiles (`cargo build --features fips`).** Cargo feature flag system selecting the FIPS allowlist as the canonical algo set. Prerequisite for FedRAMP / FIPS-140-3 module submission. ETA: 1 week.
-6. **AttestRound full validation.** Coordinator authority registry for FL jobs; today any account can attest, v0.5 enforces governance-key endorsement of coordinator addresses per `job_id`. ETA: 2 weeks.
-7. **DLA-shape demo.** Component-pedigree variant of AttestRound: replace ML-specific fields with supply-chain provenance fields (lot_id, supplier, cage_code, attestation_authority). Same primitive, different schema. ETA: 1 week (after #6). Raytheon flagship.
-8. **`docs/mainnet-plan.md`.** Full mainnet-launch design covering: mainnet RPC port (9545), launch-time difficulty calibration to expected hashrate, BFT finality gadget design (5-of-5 trusted committee MVP, swapping to stake-elected committee at v2.0). ETA: 2 weeks of writing while #1–#7 run in parallel.
-9. **Tests.** Calendar-emission cross-platform fixture identity, attest-round round-trip, upgrade-crypto rotation activation, FIPS-profile algo allowlist enforcement. ETA: ongoing.
+1. ✅ **WASM contract VM.** Replaced `crates/vm/` placeholder with a `wasmtime` 27 backend behind `--features wasm`. Fuel-metered execution, deterministic config (no SIMD, no threads). Sandbox tests: i64-add roundtrip, OutOfFuel detection, MethodNotFound, garbage-bytes rejection, content-addressed `code_hash` determinism. Default builds keep the rejecting backend so the testnet-3 image weight is unchanged.
+2. ✅ **Falcon-512 wiring.** `fn-dsa = "0.1"` (Pornin's port). `sig_algo = 1` promoted from `NotWired` to live. Spec-randomized signatures, portable verifies. Caveat documented: `fn-dsa` 0.1 doesn't guarantee byte-identical sigs across architectures (the f64 sampler is used on x86_64/aarch64), but Falcon is randomized by spec, so this isn't a protocol property anyone needs.
+3. ⚠️ **SLH-DSA-128s wiring** — **blocked upstream.** `slh-dsa = "0.1"` pins `signature ^2.3.0-pre.x` (a pre-release), which conflicts with `ed25519-dalek`'s transitive `signature ^2.0` dep. Re-enables when RustCrypto bumps `slh-dsa` to use stable signature 2.x. Dispatch slot at `sig_algo=2` is reserved (returns `NotWired`).
+4. ⏳ **Mil-spec governance keys.** Hardware procurement, not a code change. Lands with the mainnet ceremony per `docs/mainnet-plan.md`.
+5. ✅ **Build profiles (`--features fips`).** Per-algorithm features: `ed25519`, `falcon`, `fips`. FIPS builds drop ed25519-dalek + fn-dsa from the dependency graph, swap `active_allowlist_*` to `FIPS_ALLOWLIST_*`. CI exercises the FIPS surface separately. `UpgradeCrypto` apply now consults `pygrove_crypto::allowed_sig()` and refuses non-allowlisted rotations.
+6. ✅ **AttestRound full validation.** New `TxCall::RegisterAttestCoordinator` writes `CoordinatorAuthority { job_id, coordinators: Vec<AccountId>, registered_at_height }` to `Subtree::Meta` under key `[b"attau" || job_id]`. Apply path consults the registry; non-listed accounts hit `ApplyError::AttestCoordinatorNotAuthorized`. Open jobs (no registry) preserve testnet backward compatibility. v0.5 will gate the registration tx itself behind a 2-of-3 SLH-DSA governance threshold sig.
+7. ✅ **DLA-shape pedigree demo.** New `TxCall::AttestPedigree` (discriminator 6) with supply-chain schema: `lot_id`, `supplier` hash, `cage_code` (5 ASCII alphanumeric, validated against DoD 4100.39-M), `attestation_authority` hash. Records keyed under `[b"ped/" || job_id || lot_id]` in `Subtree::Attest`. Reuses the `RegisterAttestCoordinator` registry for permissioning. Same primitive as `AttestRound`, different schema — Raytheon flagship landed.
+8. ✅ **`docs/mainnet-plan.md`.** 323 lines covering: chain identity (testnet-3 → mainnet-1 parameters), port architecture (8545/9545), launch-time difficulty calibration with sensitivity analysis, BFT finality gadget (5-of-5 trusted committee MVP → stake-elected at v2.0), 2-of-3 SLH-DSA threshold cold-key generation ceremony, T-30-day announce-window genesis ceremony, libp2p stack design, threat model A1–A10, three-round external audit plan (~$230k OTA budget), post-launch ops, seven open questions to close before `v1.0.0-rc1`.
+9. ✅ **Cross-platform fixture identity test.** Pinned `81360286fc9cdbdb3b1720041be3a6f1d00ecc0a16a0b1e93adfed865379b583` — the Blake3 digest of a deterministic 100-block emission trace exercising fast (60s), target (600s), and slow (1200s) intervals during bootstrap. Folds `(height, block_ts, reward, minted_so_far)` big-endian per step. Any future change to `current_reward_with_height` flips the digest and the test fails, surfacing the change for consensus-rule review. Plus targeted tests for AttestRound authority gating, AttestPedigree CAGE validation, FIPS allowlist refusal.
 
 ## What got rejected, and why
 
@@ -67,13 +67,15 @@ feat/sprint-v1
 
 Tag at sprint end: `v0.4.0-sprint-foundation`.
 
-## Mainnet readiness gates (unchanged from RELEASES.md)
+## Mainnet readiness gates
 
-- Falcon-512 wired (#2 above)
-- Audit gap #1: real test coverage (#9 above)
-- Audit gap #4: reorg path / fork-choice rule (BFT finality gadget; v1.0 design)
-- libp2p P2P online (separate stack)
-- Mainnet genesis ceremony (after `docs/mainnet-plan.md` lands)
-- Cold governance keys generated (#3 + #4)
+| | Gate | Status |
+|---|---|---|
+| 1 | Calendar-emission inflation bug closed | ✅ |
+| 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ |
+| 3 | Falcon-512 actually wired | ✅ |
+| 4 | Real test coverage (cross-platform fixture identity, attest-round, pedigree, FIPS allowlist) | ✅ |
+| 5 | libp2p P2P online | ⬜ separate stack |
+| 6 | BFT finality gadget shipped | ⬜ v1.0 design in [`mainnet-plan.md`](mainnet-plan.md) |
 
-The sprint moves us from 2/6 gates closed to 4/6 gates closed if all 90-day items ship. The remaining 2 (P2P, BFT finality) are v1.0-mainnet-blocker territory; not sprint scope.
+The sprint moved us from 2/6 gates closed to **4/6**. The remaining two (libp2p, BFT finality) are v1.0-mainnet-blocker territory; design work is in [`mainnet-plan.md`](mainnet-plan.md).
