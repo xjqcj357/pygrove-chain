@@ -156,6 +156,14 @@ impl crate::Vm for WasmtimeVm {
                 Ok(out)
             }
             Err(e) => {
+                // wasmtime 27 surfaces the typed trap; the user-visible
+                // string just says "error while executing at wasm
+                // backtrace ...". Downcast to detect out-of-fuel reliably.
+                if let Some(trap) = e.downcast_ref::<wasmtime::Trap>() {
+                    if matches!(trap, wasmtime::Trap::OutOfFuel) {
+                        return Err(VmError::OutOfGas);
+                    }
+                }
                 let s = e.to_string();
                 if s.contains("all fuel consumed") || s.contains("out of fuel") {
                     Err(VmError::OutOfGas)
