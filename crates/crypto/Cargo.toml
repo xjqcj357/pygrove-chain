@@ -15,7 +15,9 @@ thiserror = { workspace = true }
 # `signature ^2.3.0-pre.x` pin once slh-dsa is reactivated, roadmap #3).
 ed25519-dalek = { workspace = true, optional = true }
 # Used by ed25519_keypair / falcon::keypair (CryptoRng+RngCore bound).
-rand_core = { workspace = true, optional = true }
+# Need the `getrandom` feature for OsRng — the dispatch layer pulls
+# entropy from it for Falcon's randomized signing path.
+rand_core = { workspace = true, optional = true, features = ["getrandom"] }
 # Phase B hot signature: Falcon-512 / FN-DSA (sig_algo = 1). Wired via fn-dsa
 # 0.1 (Pornin's pure-Rust port). Optional behind `falcon`; FIPS builds drop
 # Falcon (FIPS 206 draft, not yet allowlisted).
