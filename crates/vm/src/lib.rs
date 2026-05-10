@@ -36,6 +36,32 @@ use thiserror::Error;
 #[cfg(feature = "wasm")]
 pub mod wasmtime_backend;
 
+/// Read-only view onto the chain's `Subtree::Reflect` records. Implemented
+/// by `pygrove-state::MemState` (and any future GroveDB-backed store)
+/// outside this crate; consumed by the [`Vm`] when a contract calls the
+/// `chain_reflect_get` host function (the `CHAIN_REFLECT(key)` opcode the
+/// whitepaper specifies).
+///
+/// Keys follow the convention written by `pygrove_state::apply_block`:
+///   - `b"latest"`              — most recent block's Reflection record
+///   - `b"block/" || height_be` — per-height records (CBOR-encoded)
+///
+/// Returning `None` means "no record at that key"; the host function
+/// surfaces that to the contract as a length of `-1`.
+pub trait ReflectionView {
+    fn reflect_get(&self, key: &[u8]) -> Option<Vec<u8>>;
+}
+
+/// A no-op `ReflectionView` used by the rejecting backend and by tests
+/// that don't care about reflection. Returns `None` for every key.
+pub struct NoReflection;
+
+impl ReflectionView for NoReflection {
+    fn reflect_get(&self, _key: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum VmError {
     #[error("contract VM is not enabled in this build (rebuild with --features wasm)")]
@@ -86,12 +112,17 @@ pub trait Vm {
     /// Invoke `method` on a previously-compiled module with `args`,
     /// metered to `gas_limit` units. Returns the method's return bytes
     /// (typically an SCALE / CBOR payload) on success.
+    ///
+    /// `reflect` provides the contract's read-only view onto
+    /// `Subtree::Reflect`. Contracts call the `chain_reflect_get` host
+    /// function (the `CHAIN_REFLECT(key)` opcode) to read from it.
     fn run(
         &mut self,
         handle: &Self::Handle,
         method: &str,
         args: &[u8],
         gas_limit: u64,
+        reflect: &dyn ReflectionView,
     ) -> Result<Vec<u8>, VmError>;
 }
 
@@ -125,6 +156,7 @@ impl Vm for RejectingVm {
         _method: &str,
         _args: &[u8],
         _gas_limit: u64,
+        _reflect: &dyn ReflectionView,
     ) -> Result<Vec<u8>, VmError> {
         Err(VmError::NotEnabled)
     }
@@ -147,6 +179,7 @@ impl Vm for RejectingVm {
         _method: &str,
         _args: &[u8],
         _gas_limit: u64,
+        _reflect: &dyn ReflectionView,
     ) -> Result<Vec<u8>, VmError> {
         Err(VmError::NotEnabled)
     }
@@ -166,5 +199,12 @@ mod tests {
     #[test]
     fn host_constructs() {
         let _h = Host::new();
+    }
+
+    #[test]
+    fn no_reflection_always_misses() {
+        let v = NoReflection;
+        assert!(v.reflect_get(b"latest").is_none());
+        assert!(v.reflect_get(b"block/00").is_none());
     }
 }

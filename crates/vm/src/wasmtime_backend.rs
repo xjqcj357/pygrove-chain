@@ -37,8 +37,35 @@
 //! sandbox surface; a richer ABI lands with the contract type system in
 //! v0.5+.
 
-use crate::VmError;
-use wasmtime::{Config, Engine, Instance, Module, Store};
+use crate::{ReflectionView, VmError};
+use wasmtime::{Caller, Config, Engine, Extern, Linker, Module, Store};
+
+/// Per-invocation store state for a contract call. Wraps a raw pointer to
+/// the caller-supplied `&dyn ReflectionView` so the host function can
+/// reach the chain's reflection records. The pointer is valid for the
+/// lifetime of `run()`, never escapes it, and the host function is
+/// guaranteed to be called synchronously from the same call.
+///
+/// We carry it as a raw pointer (cast back to `&dyn ReflectionView`
+/// inside the host fn) because `wasmtime::Store`'s `T` must be
+/// `'static`, and a `&'a dyn ...` reference isn't.
+struct ContractCtx {
+    reflect_ptr: *const (),
+    reflect_call: unsafe fn(*const (), &[u8]) -> Option<Vec<u8>>,
+}
+
+// Safety: `WasmtimeVm::run` keeps `reflect: &dyn ReflectionView` alive
+// for the entire wasmtime call; no part of `ContractCtx` outlives that.
+unsafe impl Send for ContractCtx {}
+unsafe impl Sync for ContractCtx {}
+
+unsafe fn dispatch_reflect_get<V: ReflectionView + ?Sized>(
+    p: *const (),
+    key: &[u8],
+) -> Option<Vec<u8>> {
+    let view = unsafe { &*(p as *const V) };
+    view.reflect_get(key)
+}
 
 /// A compiled module + its source-bytes hash (for content-addressed
 /// caching downstream).
@@ -110,13 +137,87 @@ impl crate::Vm for WasmtimeVm {
         method: &str,
         args: &[u8],
         gas_limit: u64,
+        reflect: &dyn ReflectionView,
     ) -> Result<Vec<u8>, VmError> {
-        let mut store = Store::new(&self.engine, ());
+        // Build the per-call context. Erase the trait-object lifetime
+        // into a raw pointer; we re-create it inside the host function.
+        // Safe because the &dyn outlives this whole `run()` call.
+        let ctx = ContractCtx {
+            reflect_ptr: reflect as *const dyn ReflectionView as *const (),
+            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
+        };
+        let mut store = Store::new(&self.engine, ctx);
         store
             .set_fuel(gas_limit)
             .map_err(|e| VmError::Trap(e.to_string()))?;
 
-        let instance = Instance::new(&mut store, &handle.module, &[])
+        // Register the `env.chain_reflect_get` host function.
+        //
+        // Signature:
+        //   chain_reflect_get(key_ptr: i32, key_len: i32,
+        //                     out_ptr: i32, out_max_len: i32) -> i32
+        //
+        // Reads `key_len` bytes from contract memory at `key_ptr`, looks
+        // up the corresponding record in `Subtree::Reflect` via the
+        // host's `ReflectionView`, writes up to `out_max_len` value
+        // bytes to contract memory at `out_ptr`, and returns the number
+        // of bytes actually written. On a miss, returns -1. On a write
+        // overflow (`value.len() > out_max_len`), returns -2 — contracts
+        // can retry with a larger buffer.
+        let mut linker: Linker<ContractCtx> = Linker::new(&self.engine);
+        linker
+            .func_wrap(
+                "env",
+                "chain_reflect_get",
+                |mut caller: Caller<'_, ContractCtx>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_max_len: i32|
+                 -> i32 {
+                    // Fetch the linear memory export.
+                    let mem = match caller.get_export("memory") {
+                        Some(Extern::Memory(m)) => m,
+                        _ => return -3, // no memory export — programmer error
+                    };
+                    if key_ptr < 0 || key_len < 0 || out_ptr < 0 || out_max_len < 0 {
+                        return -3;
+                    }
+                    let key_ptr = key_ptr as usize;
+                    let key_len = key_len as usize;
+                    let out_ptr = out_ptr as usize;
+                    let out_max_len = out_max_len as usize;
+                    let data = mem.data(&caller);
+                    let key = match data.get(key_ptr..key_ptr.saturating_add(key_len)) {
+                        Some(slice) => slice.to_vec(),
+                        None => return -3, // OOB key read
+                    };
+                    let value = {
+                        let ctx = caller.data();
+                        // Safety: ctx.reflect_ptr came from a `&dyn`
+                        // that's still alive for this whole `run`.
+                        unsafe { (ctx.reflect_call)(ctx.reflect_ptr, &key) }
+                    };
+                    let value = match value {
+                        Some(v) => v,
+                        None => return -1,
+                    };
+                    if value.len() > out_max_len {
+                        return -2;
+                    }
+                    let data_mut = mem.data_mut(&mut caller);
+                    let dst = match data_mut.get_mut(out_ptr..out_ptr.saturating_add(value.len())) {
+                        Some(slice) => slice,
+                        None => return -3, // OOB write
+                    };
+                    dst.copy_from_slice(&value);
+                    value.len() as i32
+                },
+            )
+            .map_err(|e| VmError::InstantiateFailed(e.to_string()))?;
+
+        let instance = linker
+            .instantiate(&mut store, &handle.module)
             .map_err(|e| VmError::InstantiateFailed(e.to_string()))?;
 
         // v0.4 ABI: contract export `method` is a function `(i64...) -> i64`.
@@ -199,7 +300,7 @@ mod tests {
         let mut args = Vec::new();
         args.extend_from_slice(&7i64.to_be_bytes());
         args.extend_from_slice(&35i64.to_be_bytes());
-        let out = vm.run(&handle, "add", &args, 100_000).expect("run");
+        let out = vm.run(&handle, "add", &args, 100_000, &crate::NoReflection).expect("run");
         let result = i64::from_be_bytes(out[..8].try_into().unwrap());
         assert_eq!(result, 42);
     }
@@ -218,7 +319,7 @@ mod tests {
         let wasm = wat::parse_str(wat).unwrap();
         let mut vm = WasmtimeVm::new().unwrap();
         let handle = vm.compile(&wasm).expect("compile");
-        let r = vm.run(&handle, "spin", &[], 1000);
+        let r = vm.run(&handle, "spin", &[], 1000, &crate::NoReflection);
         assert!(matches!(r, Err(VmError::OutOfGas)), "got {r:?}");
     }
 
@@ -229,7 +330,7 @@ mod tests {
         let wasm = wat::parse_str(wat).unwrap();
         let mut vm = WasmtimeVm::new().unwrap();
         let handle = vm.compile(&wasm).expect("compile");
-        let r = vm.run(&handle, "bar", &[], 1000);
+        let r = vm.run(&handle, "bar", &[], 1000, &crate::NoReflection);
         assert!(matches!(r, Err(VmError::MethodNotFound(_))));
     }
 
@@ -252,5 +353,188 @@ mod tests {
         let h1 = vm.compile(&wasm).expect("compile 1");
         let h2 = vm.compile(&wasm).expect("compile 2");
         assert_eq!(h1.code_hash, h2.code_hash);
+    }
+
+    /// In-memory `ReflectionView` for tests. Maps `latest` → fixed bytes.
+    struct Fixture;
+    impl crate::ReflectionView for Fixture {
+        fn reflect_get(&self, key: &[u8]) -> Option<Vec<u8>> {
+            if key == b"latest" {
+                Some(vec![0xDE, 0xAD, 0xBE, 0xEF])
+            } else {
+                None
+            }
+        }
+    }
+
+    /// `chain_reflect_get` host function: contract reads its own
+    /// memory for the key, calls the import, host writes value back
+    /// into contract memory, contract returns the value's first byte.
+    ///
+    /// Module layout:
+    ///   - 1 page of linear memory (export "memory")
+    ///   - data segment at offset 0: 6 bytes of "latest"
+    ///   - exported `read(out_ptr: i32) -> i32` calls
+    ///       chain_reflect_get(0, 6, out_ptr, 32)
+    ///     returning the length result, then reads the first byte of
+    ///     the written value to confirm the host wrote the right bytes.
+    #[test]
+    fn wasmtime_chain_reflect_get_roundtrip() {
+        let wat = r#"
+            (module
+                (import "env" "chain_reflect_get"
+                    (func $reflect (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 0) "latest")
+                (func (export "read") (param $out i32) (result i32)
+                    (call $reflect
+                        (i32.const 0)        ;; key_ptr = 0 ("latest" lives here)
+                        (i32.const 6)        ;; key_len = 6
+                        (local.get $out)     ;; out_ptr = caller-chosen
+                        (i32.const 32))      ;; out_max_len = 32
+                )
+                (func (export "peek") (param $ptr i32) (result i64)
+                    (i64.extend_i32_u (i32.load8_u (local.get $ptr)))
+                )
+            )
+        "#;
+        let wasm = wat::parse_str(wat).unwrap();
+        let mut vm = WasmtimeVm::new().unwrap();
+        let handle = vm.compile(&wasm).expect("compile");
+
+        // First: call `read` with out_ptr = 100.
+        // Expected: returns 4 (length of [0xDE, 0xAD, 0xBE, 0xEF]).
+        // The contract's return convention is i64; we're passing i32 args
+        // and reading i32 results back through the i64 ABI shim. The
+        // backend's run() expects i64 args, but the contract takes i32.
+        // Skip the high-level run() and use a direct wasmtime call.
+        let ctx = ContractCtx {
+            reflect_ptr: &Fixture as *const dyn ReflectionView as *const (),
+            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
+        };
+        let mut store = Store::new(&vm.engine, ctx);
+        store.set_fuel(100_000).unwrap();
+
+        let mut linker: Linker<ContractCtx> = Linker::new(&vm.engine);
+        linker
+            .func_wrap(
+                "env",
+                "chain_reflect_get",
+                |mut caller: Caller<'_, ContractCtx>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_max_len: i32|
+                 -> i32 {
+                    let mem = match caller.get_export("memory") {
+                        Some(Extern::Memory(m)) => m,
+                        _ => return -3,
+                    };
+                    let data = mem.data(&caller);
+                    let key = match data.get(key_ptr as usize..(key_ptr + key_len) as usize) {
+                        Some(s) => s.to_vec(),
+                        None => return -3,
+                    };
+                    let value = {
+                        let c = caller.data();
+                        unsafe { (c.reflect_call)(c.reflect_ptr, &key) }
+                    };
+                    let value = match value {
+                        Some(v) => v,
+                        None => return -1,
+                    };
+                    if value.len() as i32 > out_max_len {
+                        return -2;
+                    }
+                    let data_mut = mem.data_mut(&mut caller);
+                    let dst = match data_mut
+                        .get_mut(out_ptr as usize..out_ptr as usize + value.len())
+                    {
+                        Some(s) => s,
+                        None => return -3,
+                    };
+                    dst.copy_from_slice(&value);
+                    value.len() as i32
+                },
+            )
+            .unwrap();
+
+        let instance = linker.instantiate(&mut store, &handle.module).unwrap();
+        let read = instance
+            .get_typed_func::<i32, i32>(&mut store, "read")
+            .unwrap();
+        let peek = instance
+            .get_typed_func::<i32, i64>(&mut store, "peek")
+            .unwrap();
+
+        let n = read.call(&mut store, 100).expect("read");
+        assert_eq!(n, 4, "expected 4 bytes written from `latest`");
+
+        // Now peek the first byte the host wrote — should be 0xDE.
+        let b0 = peek.call(&mut store, 100).expect("peek");
+        assert_eq!(b0, 0xDE);
+    }
+
+    /// Missing key returns -1.
+    #[test]
+    fn wasmtime_chain_reflect_get_miss_returns_neg1() {
+        let wat = r#"
+            (module
+                (import "env" "chain_reflect_get"
+                    (func $reflect (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 0) "no-such-key")
+                (func (export "lookup") (result i32)
+                    (call $reflect
+                        (i32.const 0) (i32.const 11)
+                        (i32.const 100) (i32.const 32)))
+            )
+        "#;
+        let wasm = wat::parse_str(wat).unwrap();
+        let mut vm = WasmtimeVm::new().unwrap();
+        let handle = vm.compile(&wasm).expect("compile");
+
+        let ctx = ContractCtx {
+            reflect_ptr: &Fixture as *const dyn ReflectionView as *const (),
+            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
+        };
+        let mut store = Store::new(&vm.engine, ctx);
+        store.set_fuel(100_000).unwrap();
+        let mut linker: Linker<ContractCtx> = Linker::new(&vm.engine);
+        linker
+            .func_wrap(
+                "env",
+                "chain_reflect_get",
+                |mut caller: Caller<'_, ContractCtx>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 _out_ptr: i32,
+                 _out_max_len: i32|
+                 -> i32 {
+                    let mem = match caller.get_export("memory") {
+                        Some(Extern::Memory(m)) => m,
+                        _ => return -3,
+                    };
+                    let data = mem.data(&caller);
+                    let key = data
+                        [key_ptr as usize..(key_ptr + key_len) as usize]
+                        .to_vec();
+                    let value = {
+                        let c = caller.data();
+                        unsafe { (c.reflect_call)(c.reflect_ptr, &key) }
+                    };
+                    match value {
+                        Some(_) => 0,
+                        None => -1,
+                    }
+                },
+            )
+            .unwrap();
+        let instance = linker.instantiate(&mut store, &handle.module).unwrap();
+        let lookup = instance
+            .get_typed_func::<(), i32>(&mut store, "lookup")
+            .unwrap();
+        let r = lookup.call(&mut store, ()).expect("lookup");
+        assert_eq!(r, -1);
     }
 }

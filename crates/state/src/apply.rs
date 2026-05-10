@@ -12,8 +12,10 @@
 //! reject. DeployContract/CallContract land with the v1.2 VM, UpgradeCrypto
 //! lands with Phase B.
 
+use pygrove_consensus::reflection::Reflection;
 use pygrove_core::{AccountId, Block, PubKeyRef, TxBody, TxCall, Witness};
 use pygrove_crypto as crypto;
+use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::{accounts, store::StateStore, subtrees::Subtree};
@@ -34,14 +36,52 @@ pub struct AttestRecord {
 
 /// Pending crypto-rotation record stored in `Subtree::Meta` under key
 /// `b"upgrade_crypto"`. `apply_block` checks each block's height against
-/// `target_height` and (in v0.5) rotates the active SigAlgo / HashAlgo
-/// when the height is reached.
+/// `target_height` and rotates the active SigAlgo / HashAlgo when the
+/// height is reached, by writing an [`ActiveCrypto`] record.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PendingCryptoUpgrade {
     pub target_height: u64,
     pub sig_algo: u8,
     pub hash_algo: u8,
     pub announced_at_height: u64,
+}
+
+/// Active crypto-suite record written when a pending `UpgradeCrypto`
+/// reaches its `target_height`. Stored under `Subtree::Meta` at key
+/// `b"active_crypto"`. Subsequent transactions are expected to use the
+/// algorithms specified here; full enforcement of that contract lands
+/// with the governance threshold-sig wiring.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
+pub struct ActiveCrypto {
+    pub sig_algo: u8,
+    pub hash_algo: u8,
+    pub activated_at_height: u64,
+}
+
+/// Load the currently-active crypto-suite record. Returns `None` if no
+/// `UpgradeCrypto` has been activated yet (i.e. the genesis sig/hash
+/// algos still apply).
+pub fn load_active_crypto(store: &dyn StateStore) -> Option<ActiveCrypto> {
+    let bytes = store.get(Subtree::Meta, b"active_crypto")?;
+    ciborium::de::from_reader(&bytes[..]).ok()
+}
+
+/// Load the most recent per-block [`Reflection`] record. This is what
+/// the WASM VM's `chain_reflect_get` host function (v0.5) returns for
+/// the canonical `latest` key.
+pub fn load_latest_reflection(store: &dyn StateStore) -> Option<Reflection> {
+    let bytes = store.get(Subtree::Reflect, b"latest")?;
+    ciborium::de::from_reader(&bytes[..]).ok()
+}
+
+/// Load the reflection record for a specific block height. Returns
+/// `None` if that block hasn't been applied yet.
+pub fn load_reflection_at(store: &dyn StateStore, height: u64) -> Option<Reflection> {
+    let mut key = [0u8; 14];
+    key[..6].copy_from_slice(b"block/");
+    key[6..].copy_from_slice(&height.to_be_bytes());
+    let bytes = store.get(Subtree::Reflect, &key)?;
+    ciborium::de::from_reader(&bytes[..]).ok()
 }
 
 /// Coordinator-authority registry for an FL `job_id`. Once committed via a
@@ -405,6 +445,75 @@ pub fn apply_block(
         .checked_add(total_minted)
         .ok_or(ApplyError::CoinbaseOverflow)?;
     accounts::save(store, &miner, &miner_acct);
+
+    // Reflection write — the chain reading its own past.
+    //
+    // `apply_block` now emits a `Reflection` record per block to
+    // `Subtree::Reflect`, both at `[b"block/" || height_be]` for
+    // historical lookup and at `b"latest"` for the most-recent reading
+    // (cheap chain_reflect_get target). Windowed stats (short/long/epoch)
+    // are computed at query time by aggregating the per-block records.
+    //
+    // Each record's fields:
+    //   - hashrate_proxy: header `bits` (the difficulty target encoding).
+    //     A real hashrate estimate needs τ, the time interval, and the
+    //     comparison to expected work; the consensus crate's reflection
+    //     window walker (v0.5+) will derive that.
+    //   - active_addresses: count of distinct `from_account` in this
+    //     block's txs (sybil guards aren't applied here yet — the
+    //     filtered version is computed during reflection-window rollup).
+    //   - fee_sum: total fees collected in this block.
+    //   - emission: coinbase + fees minted in this block.
+    //   - r_h_q64, r_a_q64, stability_bias: zeroed at this layer.
+    //     Computed by the consensus-side window walker that reads these
+    //     records and produces the long-window accordion inputs.
+    let mut active: BTreeSet<[u8; 20]> = BTreeSet::new();
+    for tx in txs {
+        active.insert(tx.from_account.0);
+    }
+    let reflection = Reflection {
+        hashrate_proxy: block.header.bits as u128,
+        active_addresses: active.len() as u64,
+        fee_sum: fees_total,
+        emission: total_minted,
+        r_h_q64: 0,
+        r_a_q64: 0,
+        stability_bias: 0,
+    };
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&reflection, &mut buf)
+        .map_err(|_| ApplyError::CoinbaseOverflow)?;
+    let mut block_key = [0u8; 14]; // b"block/" (6) + height u64-be (8)
+    block_key[..6].copy_from_slice(b"block/");
+    block_key[6..].copy_from_slice(&block.header.height.to_be_bytes());
+    store.put(Subtree::Reflect, &block_key, &buf);
+    store.put(Subtree::Reflect, b"latest", &buf);
+
+    // UpgradeCrypto activation: if a pending rotation targets this
+    // block's height, promote it from `pending` to `active`. Recorded
+    // under `Subtree::Meta` at key `b"active_crypto"`. Consensus reads
+    // this on the next block to know which algos apply going forward.
+    //
+    // Today the activation is just a record swap; future tx validation
+    // will consult the active record to set the canonical sig/hash algo
+    // for new transactions. The rotation is observable by anyone
+    // walking the state.
+    if let Some(pending_bytes) = store.get(Subtree::Meta, b"upgrade_crypto") {
+        if let Ok(pending) = ciborium::de::from_reader::<PendingCryptoUpgrade, _>(&pending_bytes[..])
+        {
+            if pending.target_height == block.header.height {
+                let active = ActiveCrypto {
+                    sig_algo: pending.sig_algo,
+                    hash_algo: pending.hash_algo,
+                    activated_at_height: block.header.height,
+                };
+                let mut buf = Vec::new();
+                if ciborium::ser::into_writer(&active, &mut buf).is_ok() {
+                    store.put(Subtree::Meta, b"active_crypto", &buf);
+                }
+            }
+        }
+    }
 
     Ok(ApplyOutput {
         txs_applied: txs.len(),
@@ -958,6 +1067,117 @@ mod tests {
             apply_block(&mut store, &block_b, 50),
             Err(ApplyError::PedigreeCageCodeInvalid { .. })
         ));
+    }
+
+    /// Reflection write happens on every apply_block, even an empty one.
+    /// The `latest` key holds the most recent block's reflection record.
+    #[test]
+    fn reflection_record_written_on_apply() {
+        let mut store = crate::MemState::new();
+        let mut header = empty_header();
+        header.height = 5;
+        header.bits = 0x1d00ffff;
+        let block = Block {
+            header,
+            body: BlockBody::default(),
+        };
+        apply_block(&mut store, &block, 50_000_000_000).unwrap();
+
+        let r = load_latest_reflection(&store).expect("latest reflection");
+        assert_eq!(r.hashrate_proxy, 0x1d00ffff);
+        assert_eq!(r.active_addresses, 0);
+        assert_eq!(r.fee_sum, 0);
+        assert_eq!(r.emission, 50_000_000_000);
+
+        let r2 = load_reflection_at(&store, 5).expect("per-height reflection");
+        assert_eq!(r2.hashrate_proxy, r.hashrate_proxy);
+        assert_eq!(r2.emission, r.emission);
+    }
+
+    /// Roadmap follow-up: UpgradeCrypto rotation activates when
+    /// `block.height == target_height`. Before activation, no
+    /// `active_crypto` record exists; after, the record reflects the
+    /// announced algos.
+    #[test]
+    fn upgrade_crypto_activates_at_target_height() {
+        let mut store = crate::MemState::new();
+        let mut rng = OsRng;
+        let (alice_sk, alice_pk) = crypto::ed25519_keypair(&mut rng);
+        let alice = AccountId::from_pubkey(&alice_pk);
+        accounts::save(
+            &mut store,
+            &alice,
+            &Account {
+                balance: 1000,
+                nonce: 0,
+                pubkey: alice_pk.to_vec(),
+                sig_algo: 3,
+            },
+        );
+
+        // Announce at height 1, target height 3.
+        let mut tx = TxBody {
+            nonce: 0,
+            from_account: alice,
+            call: TxCall::UpgradeCrypto {
+                target_height: 3,
+                sig_algo: 1, // Falcon-512
+                hash_algo: 1,
+            },
+            fee_sat: 0,
+            gas_limit: 0,
+            witness_hash: [0u8; 32],
+        };
+        let sig = crypto::sign(3, &alice_sk, &tx.signing_hash()).unwrap();
+        let witness = Witness {
+            sig_algo: 3,
+            sig,
+            pubkey: PubKeyRef::Known(alice),
+        };
+        tx.witness_hash = witness.hash();
+
+        let block_a = Block {
+            header: {
+                let mut h = empty_header();
+                h.height = 1;
+                h
+            },
+            body: BlockBody {
+                txs: vec![tx],
+                witnesses: vec![witness],
+            },
+        };
+        apply_block(&mut store, &block_a, 50).expect("announce");
+
+        // Before the target height, no active_crypto record yet.
+        assert!(load_active_crypto(&store).is_none());
+
+        // Empty block at height 2 — still no activation.
+        let block_b = Block {
+            header: {
+                let mut h = empty_header();
+                h.height = 2;
+                h
+            },
+            body: BlockBody::default(),
+        };
+        apply_block(&mut store, &block_b, 50).expect("h=2");
+        assert!(load_active_crypto(&store).is_none());
+
+        // At height 3, the pending upgrade activates.
+        let block_c = Block {
+            header: {
+                let mut h = empty_header();
+                h.height = 3;
+                h
+            },
+            body: BlockBody::default(),
+        };
+        apply_block(&mut store, &block_c, 50).expect("h=3 activates");
+        let active = load_active_crypto(&store).expect("active_crypto record");
+        assert_eq!(active.sig_algo, 1);
+        assert_eq!(active.hash_algo, 1);
+        assert_eq!(active.activated_at_height, 3);
     }
 
     /// Backward compat: a job_id with no registry stays open to any

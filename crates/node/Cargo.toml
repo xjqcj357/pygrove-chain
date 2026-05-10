@@ -29,6 +29,7 @@ serde_json = { workspace = true }
 ciborium = { workspace = true }
 toml = { workspace = true }
 tiny_http = { workspace = true }
+ureq = { workspace = true }
 thiserror = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 
