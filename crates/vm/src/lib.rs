@@ -48,7 +48,10 @@ pub mod wasmtime_backend;
 ///
 /// Returning `None` means "no record at that key"; the host function
 /// surfaces that to the contract as a length of `-1`.
-pub trait ReflectionView {
+///
+/// `Send + Sync` are required so the impl can sit in an `Arc<dyn ...>`
+/// inside the wasmtime `Store<T>` (whose `T` must be `'static`).
+pub trait ReflectionView: Send + Sync {
     fn reflect_get(&self, key: &[u8]) -> Option<Vec<u8>>;
 }
 
@@ -116,13 +119,17 @@ pub trait Vm {
     /// `reflect` provides the contract's read-only view onto
     /// `Subtree::Reflect`. Contracts call the `chain_reflect_get` host
     /// function (the `CHAIN_REFLECT(key)` opcode) to read from it.
+    ///
+    /// `Arc<dyn ReflectionView>` rather than `&dyn` because wasmtime's
+    /// `Store<T>` requires `T: 'static`; an `Arc` is owned + `'static`
+    /// while keeping the view shareable.
     fn run(
         &mut self,
         handle: &Self::Handle,
         method: &str,
         args: &[u8],
         gas_limit: u64,
-        reflect: &dyn ReflectionView,
+        reflect: std::sync::Arc<dyn ReflectionView>,
     ) -> Result<Vec<u8>, VmError>;
 }
 
@@ -156,7 +163,7 @@ impl Vm for RejectingVm {
         _method: &str,
         _args: &[u8],
         _gas_limit: u64,
-        _reflect: &dyn ReflectionView,
+        _reflect: std::sync::Arc<dyn ReflectionView>,
     ) -> Result<Vec<u8>, VmError> {
         Err(VmError::NotEnabled)
     }
@@ -179,7 +186,7 @@ impl Vm for RejectingVm {
         _method: &str,
         _args: &[u8],
         _gas_limit: u64,
-        _reflect: &dyn ReflectionView,
+        _reflect: std::sync::Arc<dyn ReflectionView>,
     ) -> Result<Vec<u8>, VmError> {
         Err(VmError::NotEnabled)
     }

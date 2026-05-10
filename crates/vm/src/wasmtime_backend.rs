@@ -38,33 +38,16 @@
 //! v0.5+.
 
 use crate::{ReflectionView, VmError};
+use std::sync::Arc;
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Module, Store};
 
-/// Per-invocation store state for a contract call. Wraps a raw pointer to
-/// the caller-supplied `&dyn ReflectionView` so the host function can
-/// reach the chain's reflection records. The pointer is valid for the
-/// lifetime of `run()`, never escapes it, and the host function is
-/// guaranteed to be called synchronously from the same call.
-///
-/// We carry it as a raw pointer (cast back to `&dyn ReflectionView`
-/// inside the host fn) because `wasmtime::Store`'s `T` must be
-/// `'static`, and a `&'a dyn ...` reference isn't.
-struct ContractCtx {
-    reflect_ptr: *const (),
-    reflect_call: unsafe fn(*const (), &[u8]) -> Option<Vec<u8>>,
-}
-
-// Safety: `WasmtimeVm::run` keeps `reflect: &dyn ReflectionView` alive
-// for the entire wasmtime call; no part of `ContractCtx` outlives that.
-unsafe impl Send for ContractCtx {}
-unsafe impl Sync for ContractCtx {}
-
-unsafe fn dispatch_reflect_get<V: ReflectionView + ?Sized>(
-    p: *const (),
-    key: &[u8],
-) -> Option<Vec<u8>> {
-    let view = unsafe { &*(p as *const V) };
-    view.reflect_get(key)
+/// Per-invocation store state for a contract call. Holds an `Arc<dyn
+/// ReflectionView>` (owned, `'static`, shareable) so the host function
+/// can reach the chain's reflection records. Living in an `Arc` rather
+/// than a borrow keeps wasmtime's `Store<T>: 'static` contract happy
+/// without unsafe pointer juggling.
+pub struct ContractCtx {
+    pub reflect: Arc<dyn ReflectionView>,
 }
 
 /// A compiled module + its source-bytes hash (for content-addressed
@@ -137,15 +120,9 @@ impl crate::Vm for WasmtimeVm {
         method: &str,
         args: &[u8],
         gas_limit: u64,
-        reflect: &dyn ReflectionView,
+        reflect: Arc<dyn ReflectionView>,
     ) -> Result<Vec<u8>, VmError> {
-        // Build the per-call context. Erase the trait-object lifetime
-        // into a raw pointer; we re-create it inside the host function.
-        // Safe because the &dyn outlives this whole `run()` call.
-        let ctx = ContractCtx {
-            reflect_ptr: reflect as *const dyn ReflectionView as *const (),
-            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
-        };
+        let ctx = ContractCtx { reflect };
         let mut store = Store::new(&self.engine, ctx);
         store
             .set_fuel(gas_limit)
@@ -192,12 +169,7 @@ impl crate::Vm for WasmtimeVm {
                         Some(slice) => slice.to_vec(),
                         None => return -3, // OOB key read
                     };
-                    let value = {
-                        let ctx = caller.data();
-                        // Safety: ctx.reflect_ptr came from a `&dyn`
-                        // that's still alive for this whole `run`.
-                        unsafe { (ctx.reflect_call)(ctx.reflect_ptr, &key) }
-                    };
+                    let value = caller.data().reflect.reflect_get(&key);
                     let value = match value {
                         Some(v) => v,
                         None => return -1,
@@ -300,7 +272,7 @@ mod tests {
         let mut args = Vec::new();
         args.extend_from_slice(&7i64.to_be_bytes());
         args.extend_from_slice(&35i64.to_be_bytes());
-        let out = vm.run(&handle, "add", &args, 100_000, &crate::NoReflection).expect("run");
+        let out = vm.run(&handle, "add", &args, 100_000, Arc::new(crate::NoReflection)).expect("run");
         let result = i64::from_be_bytes(out[..8].try_into().unwrap());
         assert_eq!(result, 42);
     }
@@ -319,7 +291,7 @@ mod tests {
         let wasm = wat::parse_str(wat).unwrap();
         let mut vm = WasmtimeVm::new().unwrap();
         let handle = vm.compile(&wasm).expect("compile");
-        let r = vm.run(&handle, "spin", &[], 1000, &crate::NoReflection);
+        let r = vm.run(&handle, "spin", &[], 1000, Arc::new(crate::NoReflection));
         assert!(matches!(r, Err(VmError::OutOfGas)), "got {r:?}");
     }
 
@@ -330,7 +302,7 @@ mod tests {
         let wasm = wat::parse_str(wat).unwrap();
         let mut vm = WasmtimeVm::new().unwrap();
         let handle = vm.compile(&wasm).expect("compile");
-        let r = vm.run(&handle, "bar", &[], 1000, &crate::NoReflection);
+        let r = vm.run(&handle, "bar", &[], 1000, Arc::new(crate::NoReflection));
         assert!(matches!(r, Err(VmError::MethodNotFound(_))));
     }
 
@@ -403,14 +375,11 @@ mod tests {
         let handle = vm.compile(&wasm).expect("compile");
 
         // First: call `read` with out_ptr = 100.
-        // Expected: returns 4 (length of [0xDE, 0xAD, 0xBE, 0xEF]).
-        // The contract's return convention is i64; we're passing i32 args
-        // and reading i32 results back through the i64 ABI shim. The
-        // backend's run() expects i64 args, but the contract takes i32.
-        // Skip the high-level run() and use a direct wasmtime call.
+        // The contract takes i32 params and we're testing the host fn,
+        // so we bypass the higher-level run()'s i64 packing and drive
+        // the instance directly with typed_func.
         let ctx = ContractCtx {
-            reflect_ptr: &Fixture as *const dyn ReflectionView as *const (),
-            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
+            reflect: Arc::new(Fixture),
         };
         let mut store = Store::new(&vm.engine, ctx);
         store.set_fuel(100_000).unwrap();
@@ -435,10 +404,7 @@ mod tests {
                         Some(s) => s.to_vec(),
                         None => return -3,
                     };
-                    let value = {
-                        let c = caller.data();
-                        unsafe { (c.reflect_call)(c.reflect_ptr, &key) }
-                    };
+                    let value = caller.data().reflect.reflect_get(&key);
                     let value = match value {
                         Some(v) => v,
                         None => return -1,
@@ -495,8 +461,7 @@ mod tests {
         let handle = vm.compile(&wasm).expect("compile");
 
         let ctx = ContractCtx {
-            reflect_ptr: &Fixture as *const dyn ReflectionView as *const (),
-            reflect_call: dispatch_reflect_get::<dyn ReflectionView>,
+            reflect: Arc::new(Fixture),
         };
         let mut store = Store::new(&vm.engine, ctx);
         store.set_fuel(100_000).unwrap();
@@ -505,7 +470,7 @@ mod tests {
             .func_wrap(
                 "env",
                 "chain_reflect_get",
-                |mut caller: Caller<'_, ContractCtx>,
+                |caller: Caller<'_, ContractCtx>,
                  key_ptr: i32,
                  key_len: i32,
                  _out_ptr: i32,
@@ -519,11 +484,7 @@ mod tests {
                     let key = data
                         [key_ptr as usize..(key_ptr + key_len) as usize]
                         .to_vec();
-                    let value = {
-                        let c = caller.data();
-                        unsafe { (c.reflect_call)(c.reflect_ptr, &key) }
-                    };
-                    match value {
+                    match caller.data().reflect.reflect_get(&key) {
                         Some(_) => 0,
                         None => -1,
                     }
