@@ -347,9 +347,9 @@ mod tests {
     ///   - 1 page of linear memory (export "memory")
     ///   - data segment at offset 0: 6 bytes of "latest"
     ///   - exported `read(out_ptr: i32) -> i32` calls
-    ///       chain_reflect_get(0, 6, out_ptr, 32)
-    ///     returning the length result, then reads the first byte of
-    ///     the written value to confirm the host wrote the right bytes.
+    ///     `chain_reflect_get(0, 6, out_ptr, 32)`, returning the length
+    ///     result; we then read the first byte of the written value to
+    ///     confirm the host wrote the right bytes.
     #[test]
     fn wasmtime_chain_reflect_get_roundtrip() {
         let wat = r#"
