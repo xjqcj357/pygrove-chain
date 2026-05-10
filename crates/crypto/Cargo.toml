@@ -19,7 +19,12 @@ rand_core = { workspace = true }
 # in the non-FIPS code path; FIPS builds refuse algo=1 (Falcon is FIPS 206
 # draft, not yet in FIPS_ALLOWLIST_SIG).
 fn-dsa = { workspace = true }
-# slh-dsa = { workspace = true }    # SLH-DSA-128s wiring lands in roadmap #3
+# Cold governance signatures (sig_algo = 2). SLH-DSA-128s / FIPS 205. Pure-Rust,
+# byte-deterministic by spec — no RNG threading needed for cross-platform
+# identity. ~7,856-byte sigs make it unsuitable for hot tx witnesses; we use
+# it only for UpgradeCrypto + governance threshold signatures.
+slh-dsa = { workspace = true }
+signature = { workspace = true }
 
 [features]
 default = []

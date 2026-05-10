@@ -9,7 +9,9 @@
 //!   default builds**, refused in `--features fips` builds (Falcon-512 is
 //!   FIPS 206 draft, not yet allowlisted). See [`falcon`] for details on
 //!   determinism and platform behavior.
-//! - `algo = 2` (SLH-DSA-128s) — cold governance, not yet wired.
+//! - `algo = 2` (SLH-DSA-128s / FIPS 205) — cold governance signature.
+//!   **Live in all build profiles**, including FIPS. Byte-deterministic
+//!   by spec. See [`slhdsa`] for details.
 //! - `algo = 3` (Ed25519)      — Phase A bringup. Live in default builds;
 //!   refused in `--features fips` builds.
 //! - `algo = 4` (ML-DSA-65 / FIPS 204) — FIPS-profile path, not yet wired.
@@ -47,6 +49,7 @@ use thiserror::Error;
 
 #[cfg(not(feature = "fips"))]
 pub mod falcon;
+pub mod slhdsa;
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -81,7 +84,8 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
                 falcon::sign(sk, msg, &mut OsRng)
             }
         }
-        2 | 4 => Err(CryptoError::NotWired), // SLH-DSA-128s (#3), ML-DSA-65 (deferred)
+        2 => slhdsa::sign(sk, msg),
+        4 => Err(CryptoError::NotWired), // ML-DSA-65 — deferred
         3 => {
             #[cfg(feature = "fips")]
             {
@@ -111,7 +115,8 @@ pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoE
                 falcon::verify(pk, sig, msg)
             }
         }
-        2 | 4 => Err(CryptoError::NotWired),
+        2 => slhdsa::verify(pk, sig, msg),
+        4 => Err(CryptoError::NotWired),
         3 => {
             #[cfg(feature = "fips")]
             {
@@ -359,9 +364,37 @@ mod tests {
         ));
     }
 
+    /// SLH-DSA-128s is now wired in all build profiles (roadmap #3).
+    /// Available in FIPS too — it's the cornerstone of `FIPS_ALLOWLIST_SIG`.
     #[test]
-    fn slhdsa_still_not_wired() {
-        assert!(matches!(sign(2, &[], b""), Err(CryptoError::NotWired)));
+    fn slhdsa_dispatch_roundtrips() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+        let (sk, vk) = slhdsa::keypair(&mut rng);
+        let msg = b"slh-dsa via the dispatch surface";
+        let sig = sign(2, &sk, msg).expect("slh-dsa sign via dispatch");
+        assert_eq!(sig.len(), slhdsa::SLHDSA128S_SIG_LEN);
+        verify(2, &vk, &sig, msg).expect("slh-dsa verify via dispatch");
+        verify(2, &vk, &sig, b"different msg").expect_err("tampered msg fails");
+    }
+
+    /// FIPS 205 §10.2.1: SLH-DSA sigs are byte-deterministic. This is the
+    /// dispatch-level confirmation — same `(sk, msg)` produces the same bytes
+    /// across both build profiles, both architectures, every time.
+    #[test]
+    fn slhdsa_dispatch_determinism() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+        let (sk, _vk) = slhdsa::keypair(&mut rng);
+        let msg = b"governance: rotate at height N";
+        let s1 = sign(2, &sk, msg).expect("first sign");
+        let s2 = sign(2, &sk, msg).expect("second sign");
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn mldsa_still_not_wired() {
+        assert!(matches!(sign(4, &[], b""), Err(CryptoError::NotWired)));
     }
 
     #[test]
