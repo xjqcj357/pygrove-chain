@@ -306,12 +306,13 @@ mod tests {
 
         #[test]
         fn ed25519_refused_in_fips_build() {
+            // Hardcode 32/64 — ED_SK_LEN is cfg-gated out in this profile.
             assert!(matches!(
-                sign(3, &[0u8; ED_SK_LEN], b"x"),
+                sign(3, &[0u8; 32], b"x"),
                 Err(CryptoError::NotAllowedInFipsBuild(3))
             ));
             assert!(matches!(
-                verify(3, &[0u8; 32], &[0u8; ED_SIG_LEN], b"x"),
+                verify(3, &[0u8; 32], &[0u8; 64], b"x"),
                 Err(CryptoError::NotAllowedInFipsBuild(3))
             ));
         }
