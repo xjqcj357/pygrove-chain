@@ -47,6 +47,9 @@ pub struct NodeState {
     /// Bitcoin's 10-minute target. Used to compute the "planned" emission
     /// curve the explorer / info page draws against the actual one.
     pub target_block_time_ms: u64,
+    /// Halving interval in blocks. Reflected to the client so the planned
+    /// curve out to year 127 is properly halving-aware (not linear).
+    pub halving_interval_base: u64,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -266,11 +269,17 @@ struct EmissionSeriesResp {
     samples: Vec<EmissionPoint>,
     /// Wall-clock timestamp of the genesis block — anchor for the planned curve.
     genesis_time_ms: u64,
-    /// Current per-block reward (constant for v0.1 testnet; varies post-halving).
+    /// Per-block reward at the **current** halving epoch. The planned curve has
+    /// to apply halvings to this; v0.1 testnet hasn't halved yet so this is
+    /// also the launch reward.
     block_reward_sat: u128,
     /// Mainnet target block time (`target_block_time_ms` from genesis.toml).
-    /// The "planned" curve is `floor((t - genesis_time_ms) / target_block_time_ms) * block_reward_sat`.
+    /// Planned blocks per second = `1000 / target_block_time_ms`.
     target_block_time_ms: u64,
+    /// Halving interval in blocks (`halving_interval_base` from genesis.toml).
+    /// Lets the client draw the full halving schedule out to the design
+    /// horizon — e.g. 127 years.
+    halving_interval_base: u64,
 }
 
 /// Mobile / browser wallet path. Same effect as `submit_tx` but the wallet
@@ -499,6 +508,7 @@ fn emission_series(
             genesis_time_ms: st.genesis_time_ms,
             block_reward_sat: st.block_reward_sat,
             target_block_time_ms: st.target_block_time_ms,
+            halving_interval_base: st.halving_interval_base,
         });
     }
     // Anchor at the latest block in the chain log so the chart's right edge
@@ -515,6 +525,7 @@ fn emission_series(
             genesis_time_ms: st.genesis_time_ms,
             block_reward_sat: st.block_reward_sat,
             target_block_time_ms: st.target_block_time_ms,
+            halving_interval_base: st.halving_interval_base,
         });
     }
     // Stride so we return ~`points` samples evenly across the window.
@@ -549,6 +560,7 @@ fn emission_series(
         genesis_time_ms: st.genesis_time_ms,
         block_reward_sat: st.block_reward_sat,
         target_block_time_ms: st.target_block_time_ms,
+        halving_interval_base: st.halving_interval_base,
     })
 }
 

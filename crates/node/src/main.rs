@@ -188,6 +188,7 @@ fn cmd_run(
         mempool: Arc::new(Mempool::new(10_000)),
         block_reward_sat,
         target_block_time_ms: g.target_block_time_ms,
+        halving_interval_base: g.halving_interval_base,
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
