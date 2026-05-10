@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d10" />
+<title>PyGrove Explorer</title>
+<style>
+:root {
+  --bg: #0b0d10;
+  --bg2: #11151a;
+  --bg3: #161c24;
+  --fg: #e8f0ff;
+  --dim: #9aa6b2;
+  --line: #1e252d;
+  --accent: #7cc4ff;
+  --ok: #7cffa4;
+  --warn: #ffb95c;
+  --bad: #ff7c7c;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 18px 16px 64px; min-height: 100vh; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 8px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.5px; }
+h1 .accent { color: var(--accent); }
+.netbadge {
+  display: inline-block; padding: 2px 8px; background: var(--bg2);
+  border: 1px solid var(--warn); color: var(--warn);
+  border-radius: 4px; font-size: 10px; letter-spacing: 1px; margin-left: 8px; vertical-align: middle;
+}
+.chain-pick {
+  background: var(--bg2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px;
+  -webkit-appearance: none; appearance: none;
+}
+.linkbtn {
+  display: inline-block; background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; font: inherit; font-size: 12px;
+  text-decoration: none; transition: border-color 0.15s, color 0.15s;
+}
+.linkbtn:hover { border-color: var(--accent); color: var(--accent); }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.stat { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.stat .label { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat .val { color: var(--fg); font-size: 16px; margin-top: 4px; word-break: break-all; }
+.stat .val.tip { font-size: 11px; color: var(--accent); }
+section h2 {
+  margin: 18px 0 8px 0; font-size: 11px; color: var(--dim);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;
+}
+table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; font-size: 12px; }
+thead { background: #151a21; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }
+th { color: var(--dim); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+td.hash { color: var(--accent); font-size: 11px; }
+td.hash a { color: inherit; text-decoration: none; }
+td.hash a:hover { text-decoration: underline; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: #161c24; }
+#err {
+  color: var(--bad); padding: 10px 12px; background: var(--bg2);
+  border: 1px solid var(--bad); border-radius: 6px; margin-bottom: 12px;
+  font-size: 12px; display: none;
+}
+#detail {
+  background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 14px; margin-bottom: 16px; display: none;
+}
+#detail pre {
+  margin: 0; font-size: 11px; color: var(--fg);
+  white-space: pre-wrap; word-break: break-all;
+}
+#detail .close {
+  float: right; color: var(--dim); cursor: pointer;
+  background: none; border: none; font: inherit; font-size: 12px;
+}
+#pregenesis {
+  background: linear-gradient(135deg,#1a1f2a 0%,#11151a 100%);
+  border: 1px solid var(--accent); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 14px; display: none;
+}
+#pregenesis .lbl { color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+#pregenesis .countdown { font-size: 22px; color: var(--fg); margin: 6px 0 4px 0; font-variant-numeric: tabular-nums; }
+#pregenesis .when { color: var(--dim); font-size: 11px; }
+footer { margin-top: 32px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--dim); font-size: 10px; }
+footer a { color: var(--dim); }
+footer a:hover { color: var(--accent); }
+@media (max-width: 600px) {
+  .stats { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  th, td { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Py<span class="accent">Grove</span> Explorer
+      <span class="netbadge" id="netBadge">…</span>
+    </h1>
+    <div class="toolbar">
+      <select id="chainPick" class="chain-pick">
+        <option value="testnet">testnet</option>
+        <option value="mainnet">mainnet</option>
+      </select>
+      <a class="linkbtn" href="/">Open Wallet →</a>
+    </div>
+  </header>
+
+  <div id="err"></div>
+
+  <div id="pregenesis">
+    <div class="lbl">PRE-GENESIS · fair launch lockout</div>
+    <div class="countdown" id="pre-countdown">—</div>
+    <div class="when" id="pre-when">—</div>
+  </div>
+
+  <section class="stats">
+    <div class="stat"><div class="label">Chain ID</div>  <div class="val" id="s-chain">—</div></div>
+    <div class="stat"><div class="label">Height</div>    <div class="val" id="s-height">—</div></div>
+    <div class="stat"><div class="label">Tip hash</div>  <div class="val tip" id="s-tip">—</div></div>
+    <div class="stat"><div class="label">Bits</div>      <div class="val" id="s-bits">—</div></div>
+    <div class="stat"><div class="label">Target</div>    <div class="val tip" id="s-target">—</div></div>
+    <div class="stat"><div class="label">Sig / Hash</div><div class="val" id="s-algo">—</div></div>
+    <div class="stat"><div class="label">Mempool</div>   <div class="val" id="s-mempool">—</div></div>
+    <div class="stat"><div class="label">Reward (sat)</div><div class="val" id="s-reward">—</div></div>
+  </section>
+
+  <div id="detail">
+    <button class="close" onclick="closeDetail()">close ✕</button>
+    <h3 style="margin:0 0 10px 0;font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;font-weight:500;" id="detail-title">Block —</h3>
+    <pre id="detail-body"></pre>
+  </div>
+
+  <h2 style="margin:0 0 8px 0;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;font-weight:500;">Recent blocks</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">height</th>
+        <th>hash</th>
+        <th style="width:130px">when</th>
+        <th style="width:100px">nonce</th>
+        <th style="width:50px">txs</th>
+      </tr>
+    </thead>
+    <tbody id="blocks">
+      <tr><td colspan="5" style="color:var(--dim);text-align:center;padding:20px;">loading…</td></tr>
+    </tbody>
+  </table>
+
+  <footer>
+    Source: <a href="https://github.com/xjqcj357/pygrove-chain" target="_blank" rel="noopener">github</a>
+    · <a href="https://github.com/xjqcj357/pygrove-chain/blob/main/docs/whitepaper.md" target="_blank" rel="noopener">whitepaper</a>
+    · same-origin RPC at <span id="endpoint">/api/.../rpc</span>
+  </footer>
+</div>
+
+<script>
+// Chain selection — same localStorage key as the wallet so both surfaces stay
+// in sync when you flip from testnet to mainnet on either page.
+const CHAINS = {
+  testnet: { label: 'testnet', api: '/api/testnet/rpc' },
+  mainnet: { label: 'mainnet', api: '/api/mainnet/rpc' },
+};
+const CHAIN_KEY = 'pyg_chain';
+
+function getChain() {
+  const v = localStorage.getItem(CHAIN_KEY);
+  return CHAINS[v] ? v : 'testnet';
+}
+function setChain(v) { if (CHAINS[v]) localStorage.setItem(CHAIN_KEY, v); }
+
+const $ = (id) => document.getElementById(id);
+$('chainPick').value = getChain();
+$('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+$('endpoint').textContent = CHAINS[getChain()].api;
+$('chainPick').addEventListener('change', (e) => {
+  setChain(e.target.value);
+  $('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+  $('endpoint').textContent = CHAINS[getChain()].api;
+  refresh();
+});
+
+async function rpc(method, params) {
+  const r = await fetch(CHAINS[getChain()].api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, params: params || {} }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.result;
+}
+
+function truncHash(h) {
+  if (!h || h.length < 16) return h || '—';
+  return h.slice(0, 8) + '…' + h.slice(-8);
+}
+
+function ago(ms) {
+  const d = Date.now() - Number(ms);
+  if (d < 0) return '(future)';
+  if (d < 1000) return d + ' ms ago';
+  if (d < 60_000) return Math.floor(d / 1000) + 's ago';
+  if (d < 3_600_000) return Math.floor(d / 60_000) + 'm ago';
+  return Math.floor(d / 3_600_000) + 'h ago';
+}
+
+function setErr(msg) {
+  const el = $('err');
+  if (msg) { el.textContent = msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
+}
+
+function fmtCountdown(ms) {
+  if (ms <= 0) return '0s';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm ' + sec + 's';
+  if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
+  if (m > 0) return m + 'm ' + sec + 's';
+  return sec + 's';
+}
+
+async function refresh() {
+  try {
+    const info = await rpc('get_info');
+    setErr(null);
+    $('s-chain').textContent  = info.chain_id;
+    $('s-height').textContent = info.height;
+    $('s-tip').textContent    = info.tip_hash;
+    $('s-bits').textContent   = '0x' + Number(info.bits).toString(16).padStart(8, '0');
+    $('s-target').textContent = info.target;
+    $('s-algo').textContent   = 'sig=' + info.sig_algo + ' / hash=' + info.hash_algo;
+    $('s-mempool').textContent = info.mempool_size ?? '—';
+    $('s-reward').textContent  = info.block_reward_sat ?? '—';
+
+    const pg = $('pregenesis');
+    if (Number(info.genesis_offset_ms ?? 0) < 0) {
+      pg.style.display = 'block';
+      $('pre-countdown').textContent = 'T-' + fmtCountdown(-info.genesis_offset_ms);
+      $('pre-when').textContent =
+        'Block 1 submission opens ' + new Date(Number(info.genesis_time_ms)).toUTCString() +
+        '. The chain is frozen at height 0 until then. No premine.';
+    } else {
+      pg.style.display = 'none';
+    }
+
+    const blocks = await rpc('list_blocks', { limit: 50 });
+    const tbody = $('blocks');
+    if (!blocks.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--dim);text-align:center;padding:20px;">no blocks yet — waiting for the first miner</td></tr>';
+      return;
+    }
+    tbody.innerHTML = blocks.map(b =>
+      `<tr>
+         <td>${b.height}</td>
+         <td class="hash"><a href="#" onclick="showBlock(${b.height});return false;">${truncHash(b.hash)}</a></td>
+         <td>${ago(b.timestamp_ms)}</td>
+         <td>${b.nonce}</td>
+         <td>${b.tx_count ?? 0}</td>
+       </tr>`
+    ).join('');
+  } catch (e) {
+    setErr('rpc error: ' + e.message);
+  }
+}
+
+async function showBlock(height) {
+  try {
+    const b = await rpc('get_block', { height });
+    $('detail-title').textContent = 'Block ' + height;
+    $('detail-body').textContent = JSON.stringify(b, null, 2);
+    $('detail').style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) {
+    setErr('get_block: ' + e.message);
+  }
+}
+
+function closeDetail() { $('detail').style.display = 'none'; }
+window.showBlock = showBlock;
+window.closeDetail = closeDetail;
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

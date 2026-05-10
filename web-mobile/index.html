@@ -35,6 +35,14 @@ h1 .accent { color: var(--accent); }
   padding: 6px 10px; font: inherit; font-size: 12px;
   -webkit-appearance: none; appearance: none;
 }
+.linkbtn {
+  display: inline-block; background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; font: inherit; font-size: 12px;
+  text-decoration: none; transition: border-color 0.15s, color 0.15s;
+}
+.linkbtn:hover, .linkbtn:active { border-color: var(--accent); color: var(--accent); }
+.toolbar { display: flex; gap: 8px; align-items: center; }
 .netbadge {
   display: inline-block; padding: 2px 8px;
   background: var(--bg2); border: 1px solid var(--warn);
@@ -123,10 +131,13 @@ footer a:hover { color: var(--accent); }
     <h1>Py<span class="accent">Grove</span> Wallet
       <span class="netbadge" id="netBadge">…</span>
     </h1>
-    <select id="chainPick" class="chain-pick">
-      <option value="testnet">testnet</option>
-      <option value="mainnet">mainnet</option>
-    </select>
+    <div class="toolbar">
+      <select id="chainPick" class="chain-pick">
+        <option value="testnet">testnet</option>
+        <option value="mainnet">mainnet</option>
+      </select>
+      <a class="linkbtn" href="/explorer/">Explorer →</a>
+    </div>
   </header>
 
   <div id="countdown" class="countdown hide">

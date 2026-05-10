@@ -12,4 +12,8 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # noble-ed25519 / noble-hashes / scure-base from esm.sh on first visit.
 COPY index.html /usr/share/nginx/html/index.html
 
+# Block explorer at /explorer/ — same origin as the wallet so the chain
+# selector survives across both pages via shared localStorage.
+COPY explorer.html /usr/share/nginx/html/explorer/index.html
+
 EXPOSE 80
