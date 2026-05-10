@@ -16,4 +16,8 @@ COPY index.html /usr/share/nginx/html/index.html
 # selector survives across both pages via shared localStorage.
 COPY explorer.html /usr/share/nginx/html/explorer/index.html
 
+# Emission / chain-info page at /info/ with SVG chart of actual vs planned
+# emission curves, 1h–6m zoom buttons, key KPIs.
+COPY info.html /usr/share/nginx/html/info/index.html
+
 EXPOSE 80

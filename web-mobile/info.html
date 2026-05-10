@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d10" />
+<title>PyGrove · Emission</title>
+<style>
+:root {
+  --bg: #0b0d10;
+  --bg2: #11151a;
+  --bg3: #161c24;
+  --fg: #e8f0ff;
+  --dim: #9aa6b2;
+  --line: #1e252d;
+  --accent: #7cc4ff;
+  --ok: #7cffa4;
+  --warn: #ffb95c;
+  --bad: #ff7c7c;
+  --planned: #6b7585;
+  --actual: #ffb95c;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 18px 16px 64px; min-height: 100vh; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 8px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.5px; }
+h1 .accent { color: var(--accent); }
+.netbadge {
+  display: inline-block; padding: 2px 8px; background: var(--bg2);
+  border: 1px solid var(--warn); color: var(--warn);
+  border-radius: 4px; font-size: 10px; letter-spacing: 1px; margin-left: 8px; vertical-align: middle;
+}
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chain-pick {
+  background: var(--bg2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px;
+  -webkit-appearance: none; appearance: none;
+}
+.linkbtn {
+  display: inline-block; background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; font: inherit; font-size: 12px;
+  text-decoration: none; transition: border-color 0.15s, color 0.15s;
+}
+.linkbtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.zoomrow { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 14px 0; }
+.zoom {
+  background: var(--bg2); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 12px;
+  cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.zoom:hover { border-color: var(--accent); color: var(--accent); }
+.zoom.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+
+.kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 14px;
+}
+.kpi { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.kpi .label { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi .val { font-size: 18px; margin-top: 4px; word-break: break-all; }
+.kpi .val.actual  { color: var(--actual); }
+.kpi .val.planned { color: var(--planned); }
+.kpi .val.ratio   { color: var(--ok); }
+.kpi .val.ratio.fast { color: var(--warn); }
+.kpi .val.ratio.slow { color: var(--bad); }
+
+.chart-wrap {
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 14px; margin-bottom: 14px;
+}
+.legend { display: flex; gap: 14px; font-size: 11px; color: var(--dim); margin-bottom: 8px; flex-wrap: wrap; }
+.legend .swatch { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.legend .swatch.actual { background: var(--actual); }
+.legend .swatch.planned { background: var(--planned); }
+svg.chart { display: block; width: 100%; height: 320px; }
+svg.chart text { fill: var(--dim); font: 10px ui-monospace, monospace; }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .axis { stroke: var(--line); stroke-width: 1; }
+svg.chart .actual-line { fill: none; stroke: var(--actual); stroke-width: 2; }
+svg.chart .planned-line { fill: none; stroke: var(--planned); stroke-width: 1.5; stroke-dasharray: 4 4; }
+svg.chart .marker { fill: var(--actual); stroke: var(--bg); stroke-width: 1.5; }
+
+.muted { color: var(--dim); font-size: 11px; margin-top: 12px; }
+#err {
+  color: var(--bad); padding: 10px 12px; background: var(--bg2);
+  border: 1px solid var(--bad); border-radius: 6px; margin-bottom: 12px;
+  font-size: 12px; display: none;
+}
+footer { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--dim); font-size: 10px; }
+footer a { color: var(--dim); }
+footer a:hover { color: var(--accent); }
+@media (max-width: 600px) {
+  svg.chart { height: 260px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Py<span class="accent">Grove</span> · Emission
+      <span class="netbadge" id="netBadge">…</span>
+    </h1>
+    <div class="toolbar">
+      <select id="chainPick" class="chain-pick">
+        <option value="testnet">testnet</option>
+        <option value="mainnet">mainnet</option>
+      </select>
+      <a class="linkbtn" href="/">Wallet</a>
+      <a class="linkbtn" href="/explorer/">Explorer</a>
+    </div>
+  </header>
+
+  <div id="err"></div>
+
+  <div class="zoomrow" id="zoomRow">
+    <button class="zoom" data-secs="3600">1h</button>
+    <button class="zoom active" data-secs="86400">1d</button>
+    <button class="zoom" data-secs="604800">1w</button>
+    <button class="zoom" data-secs="2592000">1m</button>
+    <button class="zoom" data-secs="7776000">3m</button>
+    <button class="zoom" data-secs="15552000">6m</button>
+  </div>
+
+  <section class="kpis">
+    <div class="kpi"><div class="label">Height</div>          <div class="val" id="kHeight">—</div></div>
+    <div class="kpi"><div class="label">Minted (PYG)</div>    <div class="val actual" id="kMinted">—</div></div>
+    <div class="kpi"><div class="label">Planned (PYG)</div>   <div class="val planned" id="kPlanned">—</div></div>
+    <div class="kpi"><div class="label">actual / planned</div><div class="val ratio" id="kRatio">—</div></div>
+    <div class="kpi"><div class="label">avg block / s</div>   <div class="val" id="kBps">—</div></div>
+    <div class="kpi"><div class="label">supply cap</div>      <div class="val" id="kCap">21,000,000 PYG</div></div>
+  </section>
+
+  <div class="chart-wrap">
+    <div class="legend">
+      <span><span class="swatch actual"></span>actual cumulative emission</span>
+      <span><span class="swatch planned"></span>planned (10-min target)</span>
+    </div>
+    <svg class="chart" id="chart" preserveAspectRatio="none"></svg>
+  </div>
+
+  <p class="muted">
+    The actual line is per-block cumulative supply minted on-chain.
+    Planned line is the Bitcoin-schedule ideal: <code>floor((t − genesis) / target_block_time) × block_reward</code>.
+    Pre-retarget on a fast network (laptop or GPU mining), actual will run ahead of planned;
+    after the first retarget at block 2,016 the slope of actual flattens toward planned.
+  </p>
+
+  <footer>
+    Source: <a href="https://github.com/xjqcj357/pygrove-chain" target="_blank" rel="noopener">github</a>
+    · same-origin RPC at <span id="endpoint">/api/.../rpc</span>
+    · refresh every 5s
+  </footer>
+</div>
+
+<script>
+// Chain selector — same localStorage key as wallet/explorer.
+const CHAINS = {
+  testnet: { label: 'testnet', api: '/api/testnet/rpc' },
+  mainnet: { label: 'mainnet', api: '/api/mainnet/rpc' },
+};
+const CHAIN_KEY = 'pyg_chain';
+const $ = (id) => document.getElementById(id);
+function getChain() {
+  const v = localStorage.getItem(CHAIN_KEY);
+  return CHAINS[v] ? v : 'testnet';
+}
+function setChain(v) { if (CHAINS[v]) localStorage.setItem(CHAIN_KEY, v); }
+
+$('chainPick').value = getChain();
+$('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+$('endpoint').textContent = CHAINS[getChain()].api;
+$('chainPick').addEventListener('change', (e) => {
+  setChain(e.target.value);
+  $('netBadge').textContent = CHAINS[getChain()].label.toUpperCase();
+  $('endpoint').textContent = CHAINS[getChain()].api;
+  refresh();
+});
+
+// Zoom buttons
+let WINDOW_SECS = 86400; // default 1d
+document.querySelectorAll('.zoom').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.zoom').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    WINDOW_SECS = Number(btn.dataset.secs);
+    refresh();
+  });
+});
+
+async function rpc(method, params) {
+  const r = await fetch(CHAINS[getChain()].api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, params: params || {} }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.result;
+}
+
+function setErr(msg) {
+  const el = $('err');
+  if (msg) { el.textContent = msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
+}
+
+// Format big sat numbers as PYG (8 decimals).
+function fmtPyg(sat) {
+  const big = BigInt(sat);
+  const SAT_PER_PYG = 100000000n;
+  const whole = big / SAT_PER_PYG;
+  const frac  = big % SAT_PER_PYG;
+  const wholeStr = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  // Trim trailing zeros for readability.
+  let fracStr = frac.toString().padStart(8, '0').replace(/0+$/, '');
+  return fracStr ? `${wholeStr}.${fracStr}` : wholeStr;
+}
+
+function fmtTimeAxis(ms, windowSecs) {
+  const d = new Date(ms);
+  if (windowSecs <= 86400) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } else if (windowSecs <= 2592000) {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } else {
+    return d.toLocaleDateString([], { year: '2-digit', month: 'short' });
+  }
+}
+
+function plannedAt(t_ms, genesis_t_ms, target_block_ms, reward_sat) {
+  if (t_ms <= genesis_t_ms) return 0n;
+  const blocks = Math.floor((t_ms - genesis_t_ms) / target_block_ms);
+  return BigInt(blocks) * BigInt(reward_sat);
+}
+
+function drawChart(svg, samples, genesis_t, target_block_ms, reward_sat) {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!samples.length) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', '50%'); t.setAttribute('y', '50%');
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = 'no blocks in this window yet';
+    svg.appendChild(t);
+    return;
+  }
+  const W = svg.clientWidth || 800;
+  const H = svg.clientHeight || 320;
+  const PAD_L = 70, PAD_R = 12, PAD_T = 14, PAD_B = 28;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const tMin = samples[0].timestamp_ms;
+  const tMax = samples[samples.length - 1].timestamp_ms;
+  // Always include "now" so the right edge tracks live time.
+  const nowMs = Date.now();
+  const xMax = Math.max(tMax, nowMs);
+  const xMin = tMin;
+
+  // Y range: actual + planned, take whichever is bigger at any x.
+  const samplesY = samples.map(s => Number(BigInt(s.minted_sat) / 100000000n));
+  const plannedAtMax = Number(plannedAt(xMax, genesis_t, target_block_ms, reward_sat) / 100000000n);
+  const plannedAtMin = Number(plannedAt(xMin, genesis_t, target_block_ms, reward_sat) / 100000000n);
+  const yMax = Math.max(...samplesY, plannedAtMax) * 1.05 + 1;
+  const yMin = 0;
+
+  function px(t) {
+    if (xMax === xMin) return PAD_L;
+    return PAD_L + (W - PAD_L - PAD_R) * (t - xMin) / (xMax - xMin);
+  }
+  function py(v) {
+    if (yMax === yMin) return H - PAD_B;
+    return PAD_T + (H - PAD_T - PAD_B) * (1 - (v - yMin) / (yMax - yMin));
+  }
+
+  const ns = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // Y gridlines (5 ticks)
+  for (let i = 0; i <= 4; i++) {
+    const v = yMin + (yMax - yMin) * (i / 4);
+    const y = py(v);
+    svg.appendChild(el('line', { class: 'grid', x1: PAD_L, x2: W - PAD_R, y1: y, y2: y }));
+    const t = el('text', { x: PAD_L - 6, y: y + 3, 'text-anchor': 'end' });
+    t.textContent = fmtPyg(BigInt(Math.round(v * 100000000)));
+    svg.appendChild(t);
+  }
+
+  // X gridlines (5 ticks)
+  for (let i = 0; i <= 4; i++) {
+    const t_ms = xMin + (xMax - xMin) * (i / 4);
+    const x = px(t_ms);
+    svg.appendChild(el('line', { class: 'grid', x1: x, x2: x, y1: PAD_T, y2: H - PAD_B }));
+    const t = el('text', { x, y: H - PAD_B + 14, 'text-anchor': 'middle' });
+    t.textContent = fmtTimeAxis(t_ms, WINDOW_SECS);
+    svg.appendChild(t);
+  }
+  svg.appendChild(el('line', { class: 'axis', x1: PAD_L, x2: W - PAD_R, y1: H - PAD_B, y2: H - PAD_B }));
+  svg.appendChild(el('line', { class: 'axis', x1: PAD_L, x2: PAD_L, y1: PAD_T, y2: H - PAD_B }));
+
+  // Planned line — dense sampling for smooth diagonal.
+  let planned_d = '';
+  const N_PLANNED = 80;
+  for (let i = 0; i <= N_PLANNED; i++) {
+    const t_ms = xMin + (xMax - xMin) * (i / N_PLANNED);
+    const v = Number(plannedAt(t_ms, genesis_t, target_block_ms, reward_sat) / 100000000n);
+    planned_d += (i === 0 ? 'M' : 'L') + px(t_ms).toFixed(1) + ',' + py(v).toFixed(1);
+  }
+  svg.appendChild(el('path', { class: 'planned-line', d: planned_d }));
+
+  // Actual line — step-after profile (each block adds reward at its timestamp).
+  let actual_d = '';
+  samples.forEach((s, i) => {
+    const v = Number(BigInt(s.minted_sat) / 100000000n);
+    actual_d += (i === 0 ? 'M' : 'L') + px(s.timestamp_ms).toFixed(1) + ',' + py(v).toFixed(1);
+  });
+  svg.appendChild(el('path', { class: 'actual-line', d: actual_d }));
+
+  // Tip marker
+  const last = samples[samples.length - 1];
+  const lastV = Number(BigInt(last.minted_sat) / 100000000n);
+  svg.appendChild(el('circle', { class: 'marker', cx: px(last.timestamp_ms), cy: py(lastV), r: 4 }));
+}
+
+async function refresh() {
+  try {
+    const data = await rpc('emission_series', { window_seconds: WINDOW_SECS, points: 240 });
+    setErr(null);
+    const samples = data.samples || [];
+    drawChart($('chart'), samples, Number(data.genesis_time_ms), Number(data.target_block_time_ms), Number(data.block_reward_sat));
+
+    if (samples.length === 0) {
+      $('kHeight').textContent  = '—';
+      $('kMinted').textContent  = '0';
+      $('kPlanned').textContent = '0';
+      $('kRatio').textContent   = '—';
+      $('kBps').textContent     = '—';
+      return;
+    }
+
+    const last = samples[samples.length - 1];
+    const planned = plannedAt(last.timestamp_ms, Number(data.genesis_time_ms), Number(data.target_block_time_ms), Number(data.block_reward_sat));
+
+    $('kHeight').textContent  = last.height;
+    $('kMinted').textContent  = fmtPyg(BigInt(last.minted_sat));
+    $('kPlanned').textContent = fmtPyg(planned);
+
+    if (planned > 0n) {
+      const ratioPct = Number(BigInt(last.minted_sat) * 10000n / planned) / 100;
+      const txt = ratioPct.toFixed(1) + '×';
+      $('kRatio').textContent = txt;
+      const klass = ratioPct > 200 ? 'fast' : ratioPct < 50 ? 'slow' : '';
+      $('kRatio').className = 'val ratio ' + klass;
+    } else {
+      $('kRatio').textContent = 'pre-genesis';
+      $('kRatio').className = 'val ratio';
+    }
+
+    // Avg blocks/sec across the window
+    const first = samples[0];
+    const dt_s = Math.max(1, (last.timestamp_ms - first.timestamp_ms) / 1000);
+    const dh = last.height - first.height;
+    $('kBps').textContent = (dh / dt_s).toFixed(2);
+  } catch (e) {
+    setErr('rpc error: ' + e.message);
+  }
+}
+
+window.addEventListener('resize', () => refresh());
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
