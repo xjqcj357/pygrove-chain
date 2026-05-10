@@ -9,13 +9,17 @@ description = "PyGrove Chain: post-quantum signature dispatch (Falcon-512, SLH-D
 [dependencies]
 pygrove-core = { path = "../core" }
 thiserror = { workspace = true }
-# Phase A bringup signature: Ed25519 (sig_algo = 3). Replaced by Falcon-512
-# in Phase B via an UpgradeCrypto event on the live testnet.
+# Phase A bringup signature: Ed25519 (sig_algo = 3). Live in default builds,
+# gated out under `--features fips`.
 ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
-# Deterministic Falcon (integer sampler). Pin exact version to preserve byte-identical sigs.
-# fn-dsa = { workspace = true }     # uncomment when crate API stabilizes
-# slh-dsa = { workspace = true }    # likewise
+# Phase B hot signature: Falcon-512 / FN-DSA (sig_algo = 1). Wired via fn-dsa
+# 0.1 (Pornin's pure-Rust port). Falcon is randomized by spec; verify is
+# portable across architectures, sign output is per-call random. Dispatched
+# in the non-FIPS code path; FIPS builds refuse algo=1 (Falcon is FIPS 206
+# draft, not yet in FIPS_ALLOWLIST_SIG).
+fn-dsa = { workspace = true }
+# slh-dsa = { workspace = true }    # SLH-DSA-128s wiring lands in roadmap #3
 
 [features]
 default = []

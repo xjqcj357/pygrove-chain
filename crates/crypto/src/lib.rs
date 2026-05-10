@@ -5,7 +5,10 @@
 //! crate. That discipline is what lets `UpgradeCrypto` swap primitives without
 //! touching consensus code.
 //!
-//! - `algo = 1` (Falcon-512 / FN-DSA, integer sampler) — Phase B, not yet wired.
+//! - `algo = 1` (Falcon-512 / FN-DSA) — Phase B hot signature. **Live in
+//!   default builds**, refused in `--features fips` builds (Falcon-512 is
+//!   FIPS 206 draft, not yet allowlisted). See [`falcon`] for details on
+//!   determinism and platform behavior.
 //! - `algo = 2` (SLH-DSA-128s) — cold governance, not yet wired.
 //! - `algo = 3` (Ed25519)      — Phase A bringup. Live in default builds;
 //!   refused in `--features fips` builds.
@@ -22,13 +25,23 @@
 //!   in `crates/state` calls `allowed_sig()` to refuse governance rotations
 //!   that target non-FIPS algorithms on a FIPS-profile node.
 
+// Ed25519 size constants — RFC 8032 fixes these forever, so we keep them as
+// local consts (always in scope) instead of pulling them through the
+// ed25519-dalek import (which is cfg-gated to non-FIPS builds).
+const ED_SK_LEN: usize = 32; // ed25519_dalek::SECRET_KEY_LENGTH
+const ED_SIG_LEN: usize = 64; // ed25519_dalek::SIGNATURE_LENGTH
+
+#[cfg(not(feature = "fips"))]
 use ed25519_dalek::{
     Signature as EdSignature, Signer, SigningKey as EdSigningKey, Verifier,
-    VerifyingKey as EdVerifyingKey, SECRET_KEY_LENGTH as ED_SK_LEN,
-    SIGNATURE_LENGTH as ED_SIG_LEN,
+    VerifyingKey as EdVerifyingKey,
 };
+#[cfg(not(feature = "fips"))]
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error;
+
+#[cfg(not(feature = "fips"))]
+pub mod falcon;
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -45,12 +58,29 @@ pub enum CryptoError {
 }
 
 /// Sign a message under the given algorithm tag.
+///
+/// Note: `algo = 1` (Falcon-512) is randomized by spec. The signing path
+/// internally uses `OsRng`; the same `(sk, msg)` produces a different
+/// signature each call. That's a Falcon design property, not a bug.
 pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
     match algo {
-        1 | 2 | 4 => Err(CryptoError::NotWired), // Falcon-512, SLH-DSA-128s, ML-DSA-65
+        1 => {
+            #[cfg(feature = "fips")]
+            {
+                let _ = (sk, msg);
+                Err(CryptoError::NotAllowedInFipsBuild(1))
+            }
+            #[cfg(not(feature = "fips"))]
+            {
+                use rand_core::OsRng;
+                falcon::sign(sk, msg, &mut OsRng)
+            }
+        }
+        2 | 4 => Err(CryptoError::NotWired), // SLH-DSA-128s (#3), ML-DSA-65 (deferred)
         3 => {
             #[cfg(feature = "fips")]
             {
+                let _ = (sk, msg);
                 Err(CryptoError::NotAllowedInFipsBuild(3))
             }
             #[cfg(not(feature = "fips"))]
@@ -65,7 +95,18 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
 /// Verify a signature under the given algorithm tag.
 pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoError> {
     match algo {
-        1 | 2 | 4 => Err(CryptoError::NotWired),
+        1 => {
+            #[cfg(feature = "fips")]
+            {
+                let _ = (pk, sig, msg);
+                Err(CryptoError::NotAllowedInFipsBuild(1))
+            }
+            #[cfg(not(feature = "fips"))]
+            {
+                falcon::verify(pk, sig, msg)
+            }
+        }
+        2 | 4 => Err(CryptoError::NotWired),
         3 => {
             #[cfg(feature = "fips")]
             {
@@ -284,9 +325,37 @@ mod tests {
         }
     }
 
+    /// Falcon-512 is now wired in non-FIPS builds (roadmap #2).
+    /// In FIPS builds, dispatch refuses with `NotAllowedInFipsBuild(1)`.
+    #[cfg(not(feature = "fips"))]
     #[test]
-    fn falcon_still_not_wired() {
-        assert!(matches!(sign(1, &[], b""), Err(CryptoError::NotWired)));
+    fn falcon_dispatch_roundtrips() {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+        let (sk, vk) = falcon::keypair(&mut rng);
+        let msg = b"falcon via the dispatch surface";
+        let sig = sign(1, &sk, msg).expect("falcon sign via dispatch");
+        assert_eq!(sig.len(), falcon::FALCON512_SIG_LEN);
+        verify(1, &vk, &sig, msg).expect("falcon verify via dispatch");
+        verify(1, &vk, &sig, b"different msg").expect_err("tampered msg fails");
+    }
+
+    #[cfg(feature = "fips")]
+    #[test]
+    fn falcon_refused_in_fips_build() {
+        assert!(matches!(
+            sign(1, &[], b""),
+            Err(CryptoError::NotAllowedInFipsBuild(1))
+        ));
+        assert!(matches!(
+            verify(1, &[], &[], b""),
+            Err(CryptoError::NotAllowedInFipsBuild(1))
+        ));
+    }
+
+    #[test]
+    fn slhdsa_still_not_wired() {
+        assert!(matches!(sign(2, &[], b""), Err(CryptoError::NotWired)));
     }
 
     #[test]
