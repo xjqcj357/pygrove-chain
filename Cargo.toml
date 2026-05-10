@@ -48,11 +48,14 @@ rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
 # PQ signatures
 # Falcon (FN-DSA) via RustCrypto — integer sampler for deterministic sigs
 fn-dsa = "0.1"
-# SLH-DSA (FIPS 205) for cold governance keys
-slh-dsa = "0.1"
-# RustCrypto's `Signer`/`Verifier` trait surface, consumed by slh-dsa
-# 0.1, which requires a 2.3.0-pre.x release.
-signature = "=2.3.0-pre.7"
+# SLH-DSA wiring is BLOCKED on a RustCrypto release: slh-dsa 0.1 pins
+# `signature ^2.3.0-pre.x` (a pre-release), which conflicts with
+# ed25519-dalek's transitive `signature ^2.0` dep. There's no version of
+# either crate that satisfies both. Re-enable when RustCrypto ships a
+# stable signature 2.x compatible slh-dsa, or when ed25519-dalek
+# upgrades its signature constraint. The dispatch slot at sig_algo=2
+# remains reserved (returns CryptoError::NotWired today). See roadmap #3.
+# slh-dsa = "0.1"
 # GUI — Slint (pure Rust, no Qt C++ deps)
 slint = { version = "1.8", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software"] }
 slint-build = "1.8"

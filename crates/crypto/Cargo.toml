@@ -9,49 +9,33 @@ description = "PyGrove Chain: post-quantum signature dispatch (Falcon-512, SLH-D
 [dependencies]
 pygrove-core = { path = "../core" }
 thiserror = { workspace = true }
-# Phase A bringup signature: Ed25519 (sig_algo = 3). Optional because the FIPS
-# profile excludes Ed25519 *and* the slh-dsa 0.1 crate pins a 2.3.0-pre.x
-# version of `signature` that conflicts with ed25519-dalek's transitive ^2.0
-# dep on the same crate. Toggling `ed25519` off in FIPS builds breaks the
-# diamond.
+# Phase A bringup signature: Ed25519 (sig_algo = 3). Optional behind the
+# `ed25519` feature so FIPS builds can drop ed25519-dalek and avoid its
+# transitive signature ^2.0 dependency (which conflicts with slh-dsa's
+# `signature ^2.3.0-pre.x` pin once slh-dsa is reactivated, roadmap #3).
 ed25519-dalek = { workspace = true, optional = true }
-# rand_core is consumed by ed25519_keypair and falcon::keypair (CryptoRng+
-# RngCore bound). Optional behind the same gates.
+# Used by ed25519_keypair / falcon::keypair (CryptoRng+RngCore bound).
 rand_core = { workspace = true, optional = true }
 # Phase B hot signature: Falcon-512 / FN-DSA (sig_algo = 1). Wired via fn-dsa
-# 0.1 (Pornin's pure-Rust port). Falcon is randomized by spec; verify is
-# portable across architectures, sign output is per-call random. Optional
-# behind the `falcon` feature; FIPS builds drop Falcon entirely (it's FIPS 206
-# draft, not yet in FIPS_ALLOWLIST_SIG).
+# 0.1 (Pornin's pure-Rust port). Optional behind `falcon`; FIPS builds drop
+# Falcon (FIPS 206 draft, not yet allowlisted).
 fn-dsa = { workspace = true, optional = true }
-# Cold governance signatures (sig_algo = 2). SLH-DSA-128s / FIPS 205. Pure-Rust,
-# byte-deterministic by spec — no RNG threading needed for cross-platform
-# identity. ~7,856-byte sigs make it unsuitable for hot tx witnesses; we use
-# it only for UpgradeCrypto + governance threshold signatures.
-slh-dsa = { workspace = true, optional = true }
-signature = { workspace = true, optional = true }
 
 [features]
-# Default: Ed25519 + Falcon-512 wired. Matches the v0.4 testnet-3 config.
-# SLH-DSA stays opt-in until RustCrypto bumps it to a stable signature 2.x;
-# until then enabling slh-dsa requires also dropping ed25519-dalek to avoid
-# the signature-version diamond conflict.
+# Default: Ed25519 + Falcon-512 wired. Matches the v0.4 testnet-3 binary
+# surface. SLH-DSA-128s (sig_algo=2) is reserved at the dispatch slot but
+# returns NotWired — the upstream slh-dsa 0.1 crate pins a pre-release of
+# `signature` that conflicts with ed25519-dalek.
 default = ["ed25519", "falcon"]
 # Ed25519 hot signature path (sig_algo=3). Pulls ed25519-dalek + rand_core.
 ed25519 = ["dep:ed25519-dalek", "dep:rand_core"]
 # Falcon-512 hot signature path (sig_algo=1). Pulls fn-dsa + rand_core.
 falcon = ["dep:fn-dsa", "dep:rand_core"]
-# SLH-DSA-128s cold-governance path (sig_algo=2). Pulls slh-dsa + signature
-# (currently a 2.3.0-pre.x release; conflicts with ed25519-dalek's signature
-# ^2.0 dep, hence the cfg-gating around the diamond).
-slhdsa = ["dep:slh-dsa", "dep:signature"]
-# FIPS-profile build. When enabled:
-#   - Ed25519 (sig_algo=3) is dropped from the dependency graph (no
-#     ed25519-dalek pulled).
-#   - Falcon-512 (sig_algo=1) is dropped (FIPS 206 draft, not allowlisted).
-#   - SLH-DSA-128s is wired in.
-#   - `allowed_sig()`/`allowed_hash()` consult `FIPS_ALLOWLIST_*`.
-#   - Used by `UpgradeCrypto` validation in `crates/state` to refuse
-#     governance rotations to non-FIPS algos on a FIPS-profile node.
-# Prerequisite for FedRAMP / FIPS-140-3 module submission.
-fips = ["slhdsa"]
+# FIPS-profile build. Excludes Ed25519 + Falcon from the dependency graph
+# entirely. SLH-DSA wiring (which would land here) is currently blocked on
+# upstream — see workspace Cargo.toml. The fips feature still flips
+# allowed_sig() / allowed_hash() to FIPS_ALLOWLIST_*, gating UpgradeCrypto
+# rotations at the consensus layer; algo dispatch returns NotWired for the
+# allowlisted slots until slh-dsa lands.
+# Build with: `cargo build -p pygrove-crypto --no-default-features --features fips`
+fips = []

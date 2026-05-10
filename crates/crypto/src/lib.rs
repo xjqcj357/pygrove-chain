@@ -8,11 +8,12 @@
 //! - `algo = 1` (Falcon-512 / FN-DSA) — Phase B hot signature. Wired when
 //!   `--features falcon` is active (default-on). FIPS builds drop it
 //!   (Falcon-512 is FIPS 206 draft, not yet allowlisted). See [`falcon`].
-//! - `algo = 2` (SLH-DSA-128s / FIPS 205) — cold governance signature.
-//!   Wired when `--features slhdsa` is active. The FIPS profile activates
-//!   it; default builds leave it off because slh-dsa 0.1 pins a
-//!   `signature ^2.3.0-pre.x` release that conflicts with ed25519-dalek's
-//!   transitive `signature ^2.0` dep. See [`slhdsa`] for details.
+//! - `algo = 2` (SLH-DSA-128s / FIPS 205) — cold governance signature slot.
+//!   **Reserved but not yet wired** in any build profile: slh-dsa 0.1 pins
+//!   a `signature ^2.3.0-pre.x` release that conflicts with ed25519-dalek's
+//!   transitive `signature ^2.0` dep. Returns `NotWired` until upstream
+//!   resolves. Dispatch slot is preserved so the rotation surface stays
+//!   forward-compatible.
 //! - `algo = 3` (Ed25519) — Phase A bringup. Wired when `--features ed25519`
 //!   is active (default-on). Dropped from FIPS builds.
 //! - `algo = 4` (ML-DSA-65 / FIPS 204) — FIPS-profile path, not yet wired.
@@ -48,8 +49,8 @@ const ED_SK_LEN: usize = 32; // ed25519_dalek::SECRET_KEY_LENGTH
 
 #[cfg(feature = "falcon")]
 pub mod falcon;
-#[cfg(feature = "slhdsa")]
-pub mod slhdsa;
+// SLH-DSA-128s module is currently absent — see roadmap #3 in lib.rs docs and
+// the workspace Cargo.toml note. Dispatch slot at sig_algo=2 returns NotWired.
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -88,16 +89,7 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
                 Err(CryptoError::NotWired)
             }
         }
-        2 => {
-            #[cfg(feature = "slhdsa")]
-            {
-                slhdsa::sign(sk, msg)
-            }
-            #[cfg(not(feature = "slhdsa"))]
-            {
-                Err(CryptoError::NotWired)
-            }
-        }
+        2 | 4 => Err(CryptoError::NotWired), // SLH-DSA-128s (#3 blocked), ML-DSA-65 (deferred)
         3 => {
             #[cfg(feature = "ed25519")]
             {
@@ -112,7 +104,6 @@ pub fn sign(algo: u8, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, CryptoError> {
                 Err(CryptoError::NotWired)
             }
         }
-        4 => Err(CryptoError::NotWired), // ML-DSA-65 — deferred
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
 }
@@ -135,16 +126,7 @@ pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoE
                 Err(CryptoError::NotWired)
             }
         }
-        2 => {
-            #[cfg(feature = "slhdsa")]
-            {
-                slhdsa::verify(pk, sig, msg)
-            }
-            #[cfg(not(feature = "slhdsa"))]
-            {
-                Err(CryptoError::NotWired)
-            }
-        }
+        2 | 4 => Err(CryptoError::NotWired),
         3 => {
             #[cfg(feature = "ed25519")]
             {
@@ -159,7 +141,6 @@ pub fn verify(algo: u8, pk: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoE
                 Err(CryptoError::NotWired)
             }
         }
-        4 => Err(CryptoError::NotWired),
         _ => Err(CryptoError::UnknownAlgo(algo)),
     }
 }
@@ -339,29 +320,10 @@ mod tests {
         verify(1, &vk, &sig, b"different msg").expect_err("tampered msg fails");
     }
 
-    #[cfg(feature = "slhdsa")]
     #[test]
-    fn slhdsa_dispatch_roundtrips() {
-        use rand_core::OsRng;
-        let mut rng = OsRng;
-        let (sk, vk) = slhdsa::keypair(&mut rng);
-        let msg = b"slh-dsa via the dispatch surface";
-        let sig = sign(2, &sk, msg).expect("slh-dsa sign via dispatch");
-        assert_eq!(sig.len(), slhdsa::SLHDSA128S_SIG_LEN);
-        verify(2, &vk, &sig, msg).expect("slh-dsa verify via dispatch");
-        verify(2, &vk, &sig, b"different msg").expect_err("tampered msg fails");
-    }
-
-    #[cfg(feature = "slhdsa")]
-    #[test]
-    fn slhdsa_dispatch_determinism() {
-        use rand_core::OsRng;
-        let mut rng = OsRng;
-        let (sk, _vk) = slhdsa::keypair(&mut rng);
-        let msg = b"governance: rotate at height N";
-        let s1 = sign(2, &sk, msg).expect("first sign");
-        let s2 = sign(2, &sk, msg).expect("second sign");
-        assert_eq!(s1, s2);
+    fn slhdsa_still_blocked() {
+        // Roadmap #3 blocked on upstream signature-version diamond.
+        assert!(matches!(sign(2, &[], b""), Err(CryptoError::NotWired)));
     }
 
     #[cfg(all(feature = "fips", not(feature = "ed25519")))]
