@@ -158,6 +158,27 @@ fn cmd_run(
         bootstrap_reward_pct: g.bootstrap_reward_pct,
     };
     let mut mem = MemState::new();
+
+    // Genesis governance: if the genesis.toml specifies an initial BFT
+    // finality committee, commit it to Subtree::Meta BEFORE replaying any
+    // blocks. This means state_root at height 0 covers the committee
+    // record — anyone who reproduces the chain from a clean genesis.toml
+    // gets the same root. Required for risk #6 (consensus-centralization
+    // / bootstrap risk closure).
+    //
+    // No committee in genesis.toml → bootstrap mode (any account can
+    // emit UpgradeCrypto / RegisterAttestCoordinator / SetGovernance).
+    if !g.genesis_committee.is_empty() {
+        install_genesis_governance(&mut mem, &g)
+            .context("install genesis_committee from genesis.toml")?;
+        tracing::info!(
+            members = g.genesis_committee.len(),
+            threshold = g.genesis_committee_threshold,
+            epoch = g.genesis_committee_epoch,
+            "genesis governance committee committed to Subtree::Meta"
+        );
+    }
+
     let mut minted_so_far: u128 = 0;
     let mut prev_reward: Option<u128> = None;
     for b in &blocks {
@@ -330,6 +351,79 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
             }
         }
     }
+}
+
+/// Decode the `genesis_committee` entries from `genesis.toml` into a
+/// `GovernanceConfig` and commit it to `Subtree::Meta` at key
+/// `b"governance"` BEFORE block replay starts.
+///
+/// Failures here are fatal — a malformed genesis_committee means the
+/// chain cannot start safely (the operator either intended a committee
+/// and got the format wrong, or pasted bad bytes). Better to refuse to
+/// start than to silently fall through to bootstrap mode.
+fn install_genesis_governance(
+    mem: &mut MemState,
+    g: &Genesis,
+) -> anyhow::Result<()> {
+    use pygrove_state::{GovernanceConfig, GovernanceSigner};
+
+    let mut signers: Vec<GovernanceSigner> = Vec::with_capacity(g.genesis_committee.len());
+    for (i, m) in g.genesis_committee.iter().enumerate() {
+        let signer_id_bytes = hex::decode(&m.signer_id_hex)
+            .map_err(|e| anyhow::anyhow!("genesis_committee[{i}].signer_id_hex: {e}"))?;
+        if signer_id_bytes.len() != 32 {
+            anyhow::bail!(
+                "genesis_committee[{i}].signer_id_hex: expected 32 bytes, got {}",
+                signer_id_bytes.len()
+            );
+        }
+        let mut signer_id = [0u8; 32];
+        signer_id.copy_from_slice(&signer_id_bytes);
+
+        let pubkey = hex::decode(&m.pubkey_hex)
+            .map_err(|e| anyhow::anyhow!("genesis_committee[{i}].pubkey_hex: {e}"))?;
+        // Sanity-check pubkey length against the algorithm's declared size,
+        // but accept the value even if the size is unknown (forward-compat).
+        if let Some((expected_pk_len, _)) = pygrove_crypto::sizes(m.sig_algo) {
+            if pubkey.len() != expected_pk_len {
+                anyhow::bail!(
+                    "genesis_committee[{i}].pubkey_hex: algo={} expects {expected_pk_len} bytes, got {}",
+                    m.sig_algo,
+                    pubkey.len()
+                );
+            }
+        }
+        signers.push(GovernanceSigner {
+            signer_id,
+            sig_algo: m.sig_algo,
+            pubkey,
+        });
+    }
+
+    let threshold = if g.genesis_committee_threshold == 0 {
+        // Operator omitted threshold → default to N-of-N (the safest
+        // initial position). They can rotate to a lower threshold via
+        // a SetGovernance tx signed by the current N-of-N.
+        signers.len() as u32
+    } else {
+        g.genesis_committee_threshold
+    };
+
+    let cfg = GovernanceConfig {
+        epoch: g.genesis_committee_epoch,
+        threshold,
+        signers,
+    };
+    cfg.validate()
+        .map_err(|e| anyhow::anyhow!("genesis_committee: {e}"))?;
+
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&cfg, &mut buf)
+        .map_err(|e| anyhow::anyhow!("encode GovernanceConfig: {e}"))?;
+    use pygrove_state::subtrees::Subtree;
+    use pygrove_state::StateStore;
+    mem.put(Subtree::Meta, b"governance", &buf);
+    Ok(())
 }
 
 fn cmd_show_emission(genesis_path: &str, data_dir: &str) -> anyhow::Result<()> {

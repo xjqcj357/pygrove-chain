@@ -82,6 +82,33 @@ pub struct Genesis {
     pub genesis_headline_hex: String,
     #[serde(default)]
     pub initial_accounts: Vec<String>,
+    /// Optional BFT finality committee committed to chain state at init.
+    /// When present, `pygrove-node init` writes a `GovernanceConfig` to
+    /// `Subtree::Meta` so the chain launches with a known committee
+    /// instead of bootstrap (anyone-can-sign) mode.
+    ///
+    /// Each entry is `[signer_id_hex, sig_algo, pubkey_hex]` — 64-char
+    /// hex for the 32-byte signer id, the algorithm tag byte, and the
+    /// algo-appropriate hex pubkey (e.g. 64-char for Ed25519).
+    /// `genesis_committee_threshold` must be ≤ `genesis_committee.len()`.
+    ///
+    /// Mainnet usage: pre-commit the 5-of-5 trusted committee (or
+    /// 2-of-3 governance committee) so the chain doesn't ship with an
+    /// open governance surface. Testnet usage: leave empty for
+    /// bootstrap mode.
+    #[serde(default)]
+    pub genesis_committee: Vec<GenesisCommitteeMember>,
+    #[serde(default)]
+    pub genesis_committee_threshold: u32,
+    #[serde(default)]
+    pub genesis_committee_epoch: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenesisCommitteeMember {
+    pub signer_id_hex: String,
+    pub sig_algo: u8,
+    pub pubkey_hex: String,
 }
 
 impl Genesis {
