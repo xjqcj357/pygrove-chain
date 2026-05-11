@@ -1851,7 +1851,11 @@ mod tests {
                         .expect("I1 (no negative balance after accepted tx)");
                     balances[to_idx] = balances[to_idx].saturating_add(amount);
                     nonces[from_idx] += 1;
-                    total_coinbase = total_coinbase.saturating_add(block_reward + fee as u128);
+                    // Conservation note: fees flow user → miner (the
+                    // miner's coinbase pays block_reward + fees), so
+                    // fees are *recirculated*, not minted. New emission
+                    // per block is exactly block_reward.
+                    total_coinbase = total_coinbase.saturating_add(block_reward);
                     accepted_blocks.push(block);
                 }
                 Err(_) => {
