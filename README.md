@@ -133,7 +133,8 @@ pygrove-chain/
 │   ├── consensus/   PoW, ASERT-2D, accordion, calendar emission, reflection
 │   ├── state/       in-memory state store with subtree segregation
 │   ├── vm/          WASM contract VM (wasmtime, behind --features wasm)
-│   ├── finality/    BFT finality gadget — committee + votes + cert verify
+│   ├── finality/    BFT finality gadget — committee + votes + BLS-aggregated cert
+│   ├── p2p/         P2P wire protocol — peer-id, gossipsub topics, in-process broker
 │   ├── node/        pygrove-node + pygrove-cli binaries
 │   └── gui/         pygrove-gui Slint desktop wallet
 ├── sim/             Python reference for accordion math + adversarial backtests
@@ -293,12 +294,15 @@ The 90-day sprint plan that lived here had nine items. All landed; their v0.5 fo
 - **Reflection subtree writes** — every `apply_block` emits a per-block `Reflection` record, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
 - **UpgradeCrypto activation** — pending rotations now actually activate at `target_height`, writing `ActiveCrypto` to `Subtree::Meta`
 - **`pygrove-cli` as real RPC client** — no more stubs; `get-info`, `show-block`, `list-blocks`, `get-balance`, `get-account`, `submit-tx`, `get-mempool`, `emission-series`, `state-root`, `health`
-- **BFT finality gadget** — committee, votes, certs, quorum check, fork-choice helper, [`crates/finality/`](crates/finality/src/lib.rs). N-of-N MVP. BLS aggregation + libp2p transport land with the P2P stack.
+- **BFT finality gadget** — committee, votes, certs, quorum check, fork-choice helper, [`crates/finality/`](crates/finality/src/lib.rs). N-of-N MVP.
+- **SLH-DSA-128s wiring** — `sig_algo=2` live in all build profiles via the pure-Rust `fips205` crate (no `signature`-crate diamond). FIPS 205 deterministic mode. [`crates/crypto/src/slhdsa.rs`](crates/crypto/src/slhdsa.rs)
+- **BLS12-381 aggregation** — `sig_algo=5` for finality votes; N validator sigs collapse to a 96-byte constant-sized cert verified in one pairing check. [`crates/crypto/src/bls.rs`](crates/crypto/src/bls.rs), [`AggregatedFinalizationCert`](crates/finality/src/lib.rs)
+- **k-of-N governance threshold sigs** — `UpgradeCrypto` and `RegisterAttestCoordinator` now require a k-of-N proof from the active committee once governance is installed. Bootstrap mode preserved. [`GovernanceConfig`](crates/state/src/apply.rs)
+- **P2P wire protocol** — peer-id format, 8 gossipsub topics, message envelope, in-process broker for tests. Transport (libp2p) lands as a follow-up integration crate. [`crates/p2p/`](crates/p2p/src/lib.rs)
 
-Two items deliberately deferred:
+One item deliberately deferred:
 
-- **SLH-DSA-128s wiring.** Blocked upstream: `slh-dsa = "0.1"` pins `signature ^2.3.0-pre.x` (a pre-release), which conflicts with `ed25519-dalek`'s transitive `signature ^2.0` dep. Re-enables when RustCrypto bumps the slh-dsa crate to use stable signature 2.x. Dispatch slot at `sig_algo=2` is reserved.
-- **HSM-backed governance keys.** Hardware procurement, not a code change. Lands with the mainnet ceremony.
+- **HSM-backed governance keys.** Hardware procurement, not a code change. The threshold-sig protocol is live in software today (Ed25519 placeholder for the signer algo today; SLH-DSA when the HSMs arrive — wire format unchanged).
 
 What replaces "the roadmap" is [`docs/mainnet-plan.md`](docs/mainnet-plan.md). It's the design ledger every change is now reviewed against.
 
@@ -312,10 +316,10 @@ Six gates close before mainnet:
 | 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ |
 | 3 | Falcon-512 actually wired | ✅ |
 | 4 | Real test coverage (unit + integration + cross-platform fixture identity) | ✅ |
-| 5 | libp2p P2P online | ⬜ separate stack |
-| 6 | BFT finality gadget shipped | ✅ skeleton + cert verify in [`crates/finality/`](crates/finality/src/lib.rs); BLS aggregation + libp2p transport land with #5 |
+| 5 | libp2p P2P online | ⏳ wire protocol shipped in [`crates/p2p/`](crates/p2p/src/lib.rs); libp2p transport (separate integration crate) is the remaining gap |
+| 6 | BFT finality gadget shipped | ✅ committee, votes, BLS-aggregated certs in [`crates/finality/`](crates/finality/src/lib.rs) |
 
-Five of six closed. The remaining one (libp2p P2P) is tracked in [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Mainnet launches when it ships and an external review has signed off on the threat model.
+All six gates have code shipped; the P2P transport integration (a layer on top of the now-stable wire protocol) is the only remaining external surface. Mainnet launches when libp2p is wired and an external review has signed off on the threat model.
 
 ## Contributing
 

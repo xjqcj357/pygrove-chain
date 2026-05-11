@@ -30,10 +30,13 @@ Six gates have to close before mainnet:
 |---|---|---|---|
 | 1. Calendar-emission inflation bug closed | ✅ shipped in v0.4.0 | TAMU + GT | `crates/consensus/src/emission.rs` — `scheduled_supply_at()` + `current_reward()`. Fixture identity tests under #9 below. |
 | 2. Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ shipped in v0.4.0 | Palantir | `crates/consensus/src/asert.rs`. Activated in genesis.toml via `asert_tau_ms`, `bootstrap_*`, `max_*_pct_change_per_block`. |
-| 3. Falcon-512 actually wired | ✅ shipped in v0.4.1 (sprint-foundation+1) | DARPA C1 | `crates/crypto/src/falcon.rs` via `fn-dsa = "0.1"`. Activated by an `UpgradeCrypto` tx from testnet → mainnet. |
-| 4. Real test coverage | ⬜ in flight | All | Calendar-emission cross-platform identity, attest-round round-trip, upgrade-crypto rotation activation, FIPS-profile algo allowlist enforcement. See [#external-review](#external-review). |
-| 5. libp2p P2P online | ⬜ separate stack | TBD | Section [P2P layer](#p2p-layer) below. |
-| 6. BFT finality gadget shipped | ⬜ v1.0 design | Palantir + DARPA | Section [BFT finality gadget](#bft-finality-gadget) below. |
+| 3. Falcon-512 actually wired | ✅ shipped in v0.4.1 | DARPA C1 | `crates/crypto/src/falcon.rs` via `fn-dsa = "0.1"`. Activated by an `UpgradeCrypto` tx from testnet → mainnet. |
+| 3b. SLH-DSA-128s wired | ✅ shipped via `fips205` 0.4 | DARPA C1.b | `crates/crypto/src/slhdsa.rs`. Pure-Rust, no `signature`-crate diamond. FIPS 205 deterministic mode. |
+| 3c. BLS12-381 wired | ✅ shipped via `blst` 0.3 | New | `crates/crypto/src/bls.rs`. Used by `AggregatedFinalizationCert` to collapse N validator sigs to a 96-byte single-pairing-check cert. |
+| 4. Real test coverage | ✅ shipped | All | Cross-platform fixture identity for emission, governance threshold roundtrip, attest-round + pedigree round-trips, FIPS allowlist enforcement, BLS aggregation 5-of-5 and 3-of-5 roundtrips, P2P broker pub/sub tests. |
+| 4b. k-of-N governance threshold sigs | ✅ shipped | Palantir + DARPA | `GovernanceConfig` + `verify_governance_proof()` in `crates/state/src/apply.rs`. `UpgradeCrypto`, `RegisterAttestCoordinator`, `SetGovernance` all gated. Bootstrap mode preserved. |
+| 5. libp2p P2P online | ⏳ wire protocol shipped | TBD | `crates/p2p/` defines `WIRE_VERSION = 1`, peer-id derivation, 8 gossipsub topics, `P2pMessage` envelope, in-process `Broker`. libp2p 0.55 integration crate (`pygrove-p2p-libp2p`) is the remaining work. |
+| 6. BFT finality gadget shipped | ✅ shipped | Palantir + DARPA | `crates/finality/` — `Committee`, `FinalizationVote`, plain + BLS-aggregated certs, `verify_cert`, `verify_aggregated_cert`, fork-choice helper. |
 
 Mainnet launches when all six are closed and an external review has signed off on the threat model.
 
