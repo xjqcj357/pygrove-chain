@@ -4,7 +4,7 @@ A small proof-of-work blockchain that listens to itself.
 
 It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retargets, halvings every 210,000 blocks, a 21,000,000-coin hard cap — and adds a measured kind of self-awareness on top. The chain reads its own statistics from a dedicated subtree of its own state. Emission breathes with hashrate and adoption inside that information. The cryptography is post-quantum where it can be, agile where it can't. The design horizon is 127 years.
 
-> **Status:** `pygrove-testnet-3` is in its 24-hour public-announcement window. The lockout drops at **2026-05-11 03:08:49 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window.
+> **Status:** `pygrove-testnet-4` is in its 24-hour public-announcement window. The lockout drops at **2026-05-12 01:03:26 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window. (Testnet-3 was retired pre-launch to roll in the v0.5 sprint: SLH-DSA, BLS aggregation, governance threshold sigs, the WASM VM host fn, and the P2P wire protocol.)
 
 ## Table of contents
 
@@ -24,7 +24,7 @@ It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retarg
 
 ## Where it lives
 
-The third public testnet (`pygrove-testnet-3`) opens on **2026-05-11 03:08:49 UTC**. You can touch it at:
+The fourth public testnet (`pygrove-testnet-4`) opens on **2026-05-12 01:03:26 UTC**. You can touch it at:
 
 - **Wallet** — [str4w.com](https://str4w.com/), works on any phone or browser
 - **Block explorer** — [str4w.com/explorer](https://str4w.com/explorer/), with a live launch-countdown banner until block 1 lands
@@ -45,15 +45,18 @@ git clone https://github.com/xjqcj357/pygrove-chain
 cd pygrove-chain
 cargo build --release --bin pygrove-node
 ./target/release/pygrove-node init
-# expected output:
-# genesis: height=0 nonce=47606 hash=000015122db455add1f242fc2b56850f9558a953a523bd8d8e2a382054d355d5
+# prints something like:
+# genesis: height=0 nonce=<N> hash=<32-byte hex>
+# The hash is a pure function of the seed values in genesis.toml — the
+# canonical value will be pinned in RELEASES.md for the v0.5 tag once
+# the first verifier's run lands.
 ```
 
 Three independent properties give the launch its credibility.
 
-The first is the **24-hour announce window.** `genesis_time_ms` in [`genesis.toml`](genesis.toml) is `2026-05-11 03:08:49 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
+The first is the **24-hour announce window.** `genesis_time_ms` in [`genesis.toml`](genesis.toml) is `2026-05-12 01:03:26 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
 
-The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of Bitcoin block 948713 — `00000000000000000000b1bb4f3506940ad5af17eb7a51d91ab5745dd738760d` — mined a few minutes before this seed was committed. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that block existed.
+The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of the latest Bitcoin block at testnet-4 seed time — `00000000000000000001b442356b8e2e0b349cd704cc74084e0762ba57838196` — mined a few minutes before this seed was committed. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that block existed.
 
 The third is the **byte-deterministic genesis.** Given the seed values in [`genesis.toml`](genesis.toml), `pygrove-node init` is a pure function of those values. Anyone running the build above will produce the exact same tip hash, on any platform. There is no place to hide a premined account.
 
@@ -143,7 +146,7 @@ pygrove-chain/
 │   ├── sprint-plan.md      current sprint design ledger
 │   └── ...
 ├── web-mobile/      browser wallet, explorer, emission monitor (deployed to str4w.com)
-├── genesis.toml     testnet-3 seed values
+├── genesis.toml     testnet-4 seed values
 ├── RELEASES.md      per-tag changelog
 └── .github/workflows/
     ├── build.yml    fmt + clippy + build + test + ghcr image publish
@@ -180,7 +183,7 @@ cargo build --release --bin pygrove-node --bin pygrove-cli
 
 # run with the in-process miner attached
 ./target/release/pygrove-node run --mine
-# until 2026-05-11 03:08:49 UTC, you'll see "PRE-GENESIS: submit_block locked"
+# until 2026-05-12 01:03:26 UTC, you'll see "PRE-GENESIS: submit_block locked"
 ```
 
 ### Run a node from Docker
@@ -219,10 +222,10 @@ Download `pygrove-gui.exe` from [Releases](https://github.com/xjqcj357/pygrove-c
 Pinned in [`genesis.toml`](genesis.toml) at the root of the repo:
 
 ```toml
-chain_id              = "pygrove-testnet-3"
-genesis_time_ms       = 1778468929000          # 2026-05-11 03:08:49 UTC
-genesis_headline_hex  = "00000000000000000000b1bb4f3506940ad5af17eb7a51d91ab5745dd738760d"
-                                               # ^ Bitcoin block 948713
+chain_id              = "pygrove-testnet-4"
+genesis_time_ms       = 1778547806000          # 2026-05-12 01:03:26 UTC
+genesis_headline_hex  = "00000000000000000001b442356b8e2e0b349cd704cc74084e0762ba57838196"
+                                               # ^ Latest BTC tip at testnet-4 seed time
 
 initial_bits          = 0x1f00ffff             # laptop-mineable initial difficulty
 target_block_time_ms  = 600000                 # 10 minutes

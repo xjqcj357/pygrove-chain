@@ -1,4 +1,4 @@
-# PyGrove Chain — TESTNET-3 genesis (24-hour announce window)
+# PyGrove Chain — TESTNET-4 genesis (24-hour announce window)
 #
 # Fair-launch ceremony (24-hour public-announcement window):
 #   - genesis_time_ms is a future, publicly-announced wall-clock time.
@@ -9,23 +9,40 @@
 #   - 24-hour announce window: nobody can mine until the wall clock catches up,
 #     so anyone can spin up a node from a clean clone before block 1 lands.
 #
-# What's in testnet-3:
-#   - **Calendar-driven emission.** Per-block reward is no longer a constant;
-#     it's a delta against `scheduled_supply_at(timestamp)`, capped per-block.
-#     Fixes the testnet-2 inflation bug (economic loop running faster than
-#     security loop). See `crates/consensus/src/emission.rs`.
-#   - **ASERT-2D per-block retarget** + 8% bits clamp + 25% issuance
-#     slew-rate + bootstrap mode for the first 2,016 blocks.
-#   - `seconds_per_halving` field added (was implicit at 4 years).
-#   - Same `pyg1...` addresses as testnet-2 — keys port forward unchanged.
-#   - Windows builds for `pygrove-node.exe` + `pygrove-cli.exe` shipped from
-#     CI alongside `pygrove-gui.exe`.
+# What's new in testnet-4 (the v0.5 sprint, landed pre-launch):
+#   - **SLH-DSA-128s (sig_algo=2) wired** via `fips205` 0.4 (pure-Rust,
+#     no signature-crate diamond). FIPS 205 deterministic mode. Cornerstone
+#     of the cold-governance + FIPS-profile path.
+#   - **BLS12-381 (sig_algo=5) wired** via `blst` 0.3 for BFT finality:
+#     N validator sigs aggregate into a single 96-byte cert, one pairing check.
+#   - **k-of-N governance threshold sigs** on `UpgradeCrypto`,
+#     `RegisterAttestCoordinator`, `SetGovernance`. Bootstrap mode allows the
+#     first governance install with an empty proof.
+#   - **WASM contract VM** (wasmtime, behind `--features wasm`) with
+#     `chain_reflect_get` host function exposing the Reflection subtree.
+#   - **Reflection records** written on every `apply_block` to
+#     `Subtree::Reflect/{block/<height>, latest}`.
+#   - **`UpgradeCrypto` activation** at `target_height` writes an
+#     `ActiveCrypto` record to `Subtree::Meta`.
+#   - **`pygrove-cli`** now a real JSON-RPC client (10 subcommands).
+#   - **P2P wire protocol** in `crates/p2p/` — peer-id format,
+#     8 gossipsub topics, `P2pMessage` envelope, in-process broker.
+#   - **BFT finality gadget** in `crates/finality/` — committee, votes,
+#     plain + BLS-aggregated cert verifiers, fork-choice helper.
+#
+# What's preserved from testnet-3:
+#   - Calendar-driven emission + ASERT-2D + 8% bits clamp + 25% issuance
+#     slew + bootstrap mode for the first 2,016 blocks.
+#   - Bitcoin-curve economic skeleton (10-min target, 2016 retarget, 210k
+#     halving, 21M cap).
+#   - Same `pyg1...` address format. Keys carry forward.
 
-chain_id                = "pygrove-testnet-3"
-genesis_time_ms         = 1778468929000        # 2026-05-11 03:08:49 UTC (+24h announce window)
-genesis_headline_hex    = "00000000000000000000b1bb4f3506940ad5af17eb7a51d91ab5745dd738760d"
-# ^ Bitcoin block 948713. Embedded into the genesis coinbase slot as
-#   proof-of-no-prior-knowledge for the testnet-3 fair-launch ceremony.
+chain_id                = "pygrove-testnet-4"
+genesis_time_ms         = 1778547806000        # 2026-05-12 01:03:26 UTC (+24h announce window)
+genesis_headline_hex    = "00000000000000000001b442356b8e2e0b349cd704cc74084e0762ba57838196"
+# ^ Latest BTC tip at testnet-4 seed time. Embedded into the genesis
+#   coinbase slot as proof-of-no-prior-knowledge for the fair-launch
+#   ceremony.
 
 # Bitcoin-curve skeleton — same as testnet-2 (laptop-mineable initial bits).
 initial_bits            = 0x1f00ffff
