@@ -76,7 +76,7 @@ impl ExpVariate {
             mult_den = 1;
         }
         // Add a small jitter so consecutive blocks aren't byte-identical.
-        let jitter = (self.next_u64() % (self.target_ms / 10).max(1)) as u64;
+        let jitter = self.next_u64() % (self.target_ms / 10).max(1);
         (self.target_ms.saturating_mul(mult_num) / mult_den).saturating_add(jitter)
     }
 }
