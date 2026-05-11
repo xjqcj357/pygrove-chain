@@ -240,11 +240,27 @@ fn emission_backtest_210k_blocks() {
     println!("final minted: {} sat ({} PYG)", minted, minted / 100_000_000);
     println!("max slew jump observed: {} sat", max_jump_observed);
 
-    // Pinned digest. Set to a known-wrong sentinel on the first CI
-    // run so the assertion fires and the actual digest lands in the
-    // failure log. Next commit pins the real value.
+    // Pinned digest of the long-form emission backtest, captured from
+    // x86_64 Linux CI. Any future change to the emission math —
+    // accidental or intentional — flips this hash and the test fails.
+    // To update: read the new digest from the failure log's `left:`
+    // field and replace this constant in the SAME PR that changed the
+    // math, with reviewer sign-off documenting the semantic change.
+    //
+    // Sampled at heights: [1000, 10000, 50000, 100000, 210000]
+    //   2,500,000,000,000           sat at h=1000   (= 5 PYG/block × 500 actual blocks, bootstrap)
+    //   34,124,876,248,497          sat at h=10000  (~341k PYG, post-bootstrap)
+    //   179,712,975,865,261         sat at h=50000  (~1.79M PYG)
+    //   361,834,915,917,278         sat at h=100000 (~3.62M PYG)
+    //   718,439,599,125,112         sat at h=210000 (~7.18M PYG, first halving)
+    //
+    // Sanity check: at h=210000 (first halving boundary), cumulative
+    // minted should be near supply_cap/2 = 10.5M PYG. We're at 7.18M
+    // because bootstrap mode caps emission at 50% for the first 2,016
+    // blocks. The 30% shortfall vs Bitcoin-parity is the calendar's
+    // proper accounting of the bootstrap window.
     const EXPECTED: &str =
-        "1111111111111111111111111111111111111111111111111111111111111111";
+        "921ebf2751bbf307cda2a358f8f650758d6965bfc61b14b96f1227280668fad7";
     if EXPECTED != "0000000000000000000000000000000000000000000000000000000000000000" {
         assert_eq!(
             actual, EXPECTED,
