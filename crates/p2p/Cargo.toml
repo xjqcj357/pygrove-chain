@@ -1,0 +1,20 @@
+[package]
+name = "pygrove-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyGrove Chain: P2P protocol (wire types, peer-id, gossip topics)"
+
+[dependencies]
+pygrove-core = { path = "../core" }
+pygrove-finality = { path = "../finality" }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+rand_core = { workspace = true, features = ["getrandom"] }
