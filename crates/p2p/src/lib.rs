@@ -158,11 +158,11 @@ impl P2pMessage {
                 h.update(&[2u8]);
                 h.update(tx_hash);
             }
-            P2pPayload::FinalityVote { vote_hash } => {
+            P2pPayload::FinalityVote { vote_hash, .. } => {
                 h.update(&[3u8]);
                 h.update(vote_hash);
             }
-            P2pPayload::FinalityCert { cert_hash } => {
+            P2pPayload::FinalityCert { cert_hash, .. } => {
                 h.update(&[4u8]);
                 h.update(cert_hash);
             }
@@ -170,11 +170,11 @@ impl P2pMessage {
                 h.update(&[5u8]);
                 h.update(&head_height.to_le_bytes());
             }
-            P2pPayload::GovernanceAnnounce { tx_hash } => {
+            P2pPayload::GovernanceAnnounce { tx_hash, .. } => {
                 h.update(&[6u8]);
                 h.update(tx_hash);
             }
-            P2pPayload::Attestation { tx_hash } => {
+            P2pPayload::Attestation { tx_hash, .. } => {
                 h.update(&[7u8]);
                 h.update(tx_hash);
             }
