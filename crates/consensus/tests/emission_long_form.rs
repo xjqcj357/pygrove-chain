@@ -240,10 +240,11 @@ fn emission_backtest_210k_blocks() {
     println!("final minted: {} sat ({} PYG)", minted, minted / 100_000_000);
     println!("max slew jump observed: {} sat", max_jump_observed);
 
-    // Pinned digest. The CI will print the actual digest on a
-    // first-run mismatch; we'll pin it then.
+    // Pinned digest. Set to a known-wrong sentinel on the first CI
+    // run so the assertion fires and the actual digest lands in the
+    // failure log. Next commit pins the real value.
     const EXPECTED: &str =
-        "0000000000000000000000000000000000000000000000000000000000000000";
+        "1111111111111111111111111111111111111111111111111111111111111111";
     if EXPECTED != "0000000000000000000000000000000000000000000000000000000000000000" {
         assert_eq!(
             actual, EXPECTED,
