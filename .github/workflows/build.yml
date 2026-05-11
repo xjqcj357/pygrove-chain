@@ -69,6 +69,19 @@ jobs:
       - name: cargo clippy pygrove-vm --features wasm
         run: cargo clippy -p pygrove-vm --features wasm --all-targets -- -D warnings
 
+      # Risk #3: RocksDB-backed StateStore. Builds the C++ rocksdb deps
+      # (~80MB of toolchain on first build), so we test it on its own
+      # crate. The state_root matches MemState's exactly, so the rest
+      # of the workspace is invariant under this choice.
+      - name: cargo build pygrove-state --features rocksdb
+        run: cargo build -p pygrove-state --features rocksdb --all-targets
+
+      - name: cargo test pygrove-state --features rocksdb
+        run: cargo test -p pygrove-state --features rocksdb
+
+      - name: cargo clippy pygrove-state --features rocksdb
+        run: cargo clippy -p pygrove-state --features rocksdb --all-targets -- -D warnings
+
   sim:
     name: python sim smoke test
     runs-on: ubuntu-latest

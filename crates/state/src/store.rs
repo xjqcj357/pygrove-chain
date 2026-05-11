@@ -30,6 +30,15 @@ impl MemState {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Walk every `(subtree_tag, key, value)` triple in canonical sort
+    /// order. Used by `RocksState::import_from` to migrate to persistent
+    /// storage without changing the state_root.
+    pub fn iter_canonical(&self) -> impl Iterator<Item = (u8, &[u8], &[u8])> {
+        self.data
+            .iter()
+            .map(|((s, k), v)| (*s, k.as_slice(), v.as_slice()))
+    }
 }
 
 impl StateStore for MemState {

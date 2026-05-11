@@ -9,6 +9,10 @@ pub mod accounts;
 pub mod apply;
 pub mod store;
 pub mod subtrees;
+#[cfg(feature = "rocksdb")]
+pub mod rocks_store;
+#[cfg(feature = "rocksdb")]
+pub use rocks_store::{RocksError, RocksState};
 
 pub use accounts::Account;
 pub use apply::{
