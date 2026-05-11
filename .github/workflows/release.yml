@@ -6,6 +6,14 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# `contents: write` is required so `softprops/action-gh-release@v2` can attach
+# binaries to the GitHub Release for a pushed tag. The default GITHUB_TOKEN
+# permission is read-only on `contents`, which causes the action to fail with
+# "Resource not accessible by integration". This grants only what the release
+# step needs — no `packages: write`, no `id-token: write`.
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
