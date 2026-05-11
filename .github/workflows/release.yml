@@ -24,6 +24,12 @@ jobs:
           name: pygrove-gui-windows-x86_64
           path: target/release/pygrove-gui.exe
           if-no-files-found: error
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/pygrove-gui.exe
+          fail_on_unmatched_files: true
 
   node-linux:
     name: pygrove-node (linux)
@@ -45,6 +51,19 @@ jobs:
             target/release/pygrove-node
             target/release/pygrove-cli
           if-no-files-found: error
+      - name: Rename for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cp target/release/pygrove-node pygrove-node-linux-x86_64
+          cp target/release/pygrove-cli pygrove-cli-linux-x86_64
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pygrove-node-linux-x86_64
+            pygrove-cli-linux-x86_64
+          fail_on_unmatched_files: true
 
   node-windows:
     name: pygrove-node.exe + cli (windows)
@@ -62,3 +81,11 @@ jobs:
             target/release/pygrove-node.exe
             target/release/pygrove-cli.exe
           if-no-files-found: error
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/pygrove-node.exe
+            target/release/pygrove-cli.exe
+          fail_on_unmatched_files: true
