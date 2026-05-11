@@ -4,7 +4,9 @@ A small proof-of-work blockchain that listens to itself.
 
 It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retargets, halvings every 210,000 blocks, a 21,000,000-coin hard cap — and adds a measured kind of self-awareness on top. The chain reads its own statistics from a dedicated subtree of its own state. Emission breathes with hashrate and adoption inside that information. The cryptography is post-quantum where it can be, agile where it can't. The design horizon is 127 years.
 
-> **Status:** `pygrove-testnet-5` is in its 24-hour public-announcement window. The lockout drops at **2026-05-12 21:27:23 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window. (Testnet-4 was retired pre-launch to roll in the risk-hardening sprint: RocksDB state-store backend, `/metrics` endpoint, ops runbook, genesis governance committee, property-based fuzz tests, long-form emission backtest with pinned canonical digest.)
+> **Status:** `pygrove-testnet-5` is in its 24-hour public-announcement window. The lockout drops at **2026-05-12 21:27:23 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window.
+>
+> Three earlier testnets (`-2`, `-3`, `-4`) were retired pre-launch as each sprint folded in new surface that wasn't worth shipping a fresh inflation-prone genesis for. Testnet-5 is the first launch where every closeable risk has been closed.
 
 ## Table of contents
 
@@ -13,12 +15,14 @@ It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retarg
 - [What's distinctive](#whats-distinctive)
 - [Operator safeties](#operator-safeties)
 - [What's actually shipped](#whats-actually-shipped)
+- [Cryptographic suite](#cryptographic-suite)
 - [Architecture](#architecture)
 - [Quick start](#quick-start)
 - [Genesis seed](#genesis-seed)
 - [JSON-RPC surface](#json-rpc-surface)
-- [Roadmap](#roadmap)
+- [Observability](#observability)
 - [Mainnet readiness](#mainnet-readiness)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -29,10 +33,11 @@ The fifth public testnet (`pygrove-testnet-5`) opens on **2026-05-12 21:27:23 UT
 - **Wallet** — [str4w.com](https://str4w.com/), works on any phone or browser
 - **Block explorer** — [str4w.com/explorer](https://str4w.com/explorer/), with a live launch-countdown banner until block 1 lands
 - **Emission monitor** — [str4w.com/info](https://str4w.com/info/), zooming from one day out to one hundred and twenty-seven years
-- **Windows desktop wallet** — `pygrove-gui.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases)
-- **Windows full node** — `pygrove-node.exe` + `pygrove-cli.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases)
-- **Linux full node** — `pygrove-node` + `pygrove-cli` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases), or as a container image at `ghcr.io/xjqcj357/pygrove-chain:latest`
+- **Windows desktop wallet** — `pygrove-gui.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases/latest)
+- **Windows full node** — `pygrove-node.exe` + `pygrove-cli.exe` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases/latest)
+- **Linux full node** — `pygrove-node-linux-x86_64` + `pygrove-cli-linux-x86_64` from the [latest release](https://github.com/xjqcj357/pygrove-chain/releases/latest), or as a container image at `ghcr.io/xjqcj357/pygrove-chain:latest`
 - **JSON-RPC** — `https://str4w.com/api/testnet/rpc`
+- **Prometheus metrics** — `https://str4w.com/metrics` (height, genesis_offset_ms, mempool_size, block_reward_sat, finality height)
 
 The same `pyg1...` address works on every client. Your secret-key file carries between them.
 
@@ -47,18 +52,15 @@ cargo build --release --bin pygrove-node
 ./target/release/pygrove-node init
 # prints something like:
 # genesis: height=0 nonce=<N> hash=<32-byte hex>
-# The hash is a pure function of the seed values in genesis.toml — the
-# canonical value will be pinned in RELEASES.md for the v0.5 tag once
-# the first verifier's run lands.
 ```
 
-Three independent properties give the launch its credibility.
+The genesis hash is a pure function of the seed values in [`genesis.toml`](genesis.toml). Three independent properties make the launch credible:
 
-The first is the **24-hour announce window.** `genesis_time_ms` in [`genesis.toml`](genesis.toml) is `2026-05-12 21:27:23 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
+The first is the **24-hour announce window.** `genesis_time_ms` is `2026-05-12 21:27:23 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
 
-The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of the latest Bitcoin block at testnet-5 seed time — `000000000000000000020060068bc7e3e47b15b37a716a4a72a6172ade19017f` — mined a few minutes before this seed was committed. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that block existed.
+The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of the Bitcoin block mined a few minutes before the testnet-5 seed was committed — `000000000000000000020060068bc7e3e47b15b37a716a4a72a6172ade19017f`. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that BTC block existed.
 
-The third is the **byte-deterministic genesis.** Given the seed values in [`genesis.toml`](genesis.toml), `pygrove-node init` is a pure function of those values. Anyone running the build above will produce the exact same tip hash, on any platform. There is no place to hide a premined account.
+The third is the **byte-deterministic genesis.** Given the seed values, `pygrove-node init` is a pure function. The canonical genesis tip hash will be pinned in [RELEASES.md](RELEASES.md) when v0.5.0 is tagged so any auditor can compare their local build against the chain's claim.
 
 Verify the live chain matches your local seed:
 
@@ -76,55 +78,83 @@ The protocol does five things you won't find together anywhere else.
 
 The first is **the Accordion.** Two adaptive bellows — one tracking hashrate ratio period over period, the other tracking the count of unique sybil-guarded active addresses — modulate the halving schedule and difficulty around Bitcoin's curve. When both bellows are pumping, halvings arrive sooner and difficulty doesn't lag. When they deflate, halvings pause. At equilibrium it's pure Bitcoin.
 
-The second is **the Reflection.** A dedicated `reflect/` subtree of the chain state holds rolling statistics — hashrate, active addresses, fee density, emission rate — across short (144 blocks), long (2,016), and epoch (210,000) windows. Consensus reads them to compute the accordion. A future contract VM reads them via a `CHAIN_REFLECT` opcode. The chain learns from its own past.
+The second is **the Reflection.** A dedicated `reflect/` subtree of the chain state holds rolling statistics — hashrate proxy, active addresses, fee density, emission rate — committed on every `apply_block`. Consensus reads them to compute the accordion. The WASM contract VM reads them via a `chain_reflect_get` host function (the `CHAIN_REFLECT(key)` opcode the whitepaper specifies). The chain learns from its own past.
 
 The third is **the ETF of one.** The accordion is steered toward flat fees-per-active-address — a proxy for whether the median user finds the chain affordable. No oracles. The chain rebalances itself on every retarget against a basket whose only constituent is itself.
 
-The fourth is **calendar emission.** Per-block reward is a delta against a wall-clock schedule, capped per block. Even when blocks land a hundred times faster than target during difficulty discovery, cumulative emission tracks the calendar. No premine optics, by construction.
+The fourth is **calendar emission.** Per-block reward is a delta against a wall-clock schedule, capped per block. Even when blocks land a hundred times faster than target during difficulty discovery, cumulative emission tracks the calendar. No premine optics, by construction. The math is pinned by a 210,000-block backtest digest (`921ebf27...`) so any future change to the emission curve flips the digest and fails CI.
 
-The fifth is **crypto agility from block zero.** Every signature carries a one-byte algorithm tag. Every hash carries one too. Falcon-512, SLH-DSA-128s, ML-DSA-65, and SHA3-512 are tag-plumbed and waiting; testnet runs the lighter Ed25519 + Blake3-XOF-512 path while the post-quantum suite finishes wiring. An `UpgradeCrypto` governance transaction activates new primitives at a future block height — no fork. The chain is meant to outlive its first cryptosuite, and its second, and its third.
+The fifth is **crypto agility from block zero.** Every signature carries a one-byte algorithm tag. Every hash carries one too. The full post-quantum suite is wired today (Falcon-512, SLH-DSA-128s, BLS12-381 for finality aggregation, ML-DSA-65 slot reserved). An `UpgradeCrypto` governance transaction — gated by a k-of-N threshold signature once a `GovernanceConfig` is installed — activates new primitives at a future block height without forking. The chain is meant to outlive its first cryptosuite, and its second, and its third.
 
 ## Operator safeties
 
-Testnet-2 exposed a **cadence-mismatch bug**: the economic adaptation layer (block reward minted per block) ran 5–6 orders of magnitude faster than the security stabilization layer (difficulty retarget every 2,016 blocks). At launch with hashrate above the implied target, half a million PYG could mint in the difficulty-discovery window before retarget caught up. Total cap held in aggregate; distribution was indistinguishable from a premine. Testnet-3 addresses this with **calendar emission** as the primary fix and four operator-grade safeties stacked on top:
+Testnet-2 exposed a **cadence-mismatch bug**: the economic adaptation layer (block reward minted per block) ran 5–6 orders of magnitude faster than the security stabilization layer (difficulty retarget every 2,016 blocks). At launch with hashrate above the implied target, half a million PYG could mint in the difficulty-discovery window before retarget caught up. Total cap held in aggregate; distribution was indistinguishable from a premine. Testnet-5 inherits the testnet-3 fix and stacks more on top:
 
-1. **ASERT-2D per-block retarget** — Bitcoin Cash's 2020 difficulty algorithm, ported. Difficulty adjusts continuously, not only every 2,016 blocks. Default τ = 2 days; bootstrap τ = 1 hour for the first 2,016 blocks while the discovery window settles.
-2. **8% per-block bits clamp** — no matter what ASERT computes, the difficulty target cannot move by more than 8% in either direction in a single block. A single hashrate spike cannot instantly flatten the curve.
-3. **25% per-block issuance slew rate** — the mined reward cannot change by more than 25% relative to the previous block's reward. Smooths the calendar-emission delta across hashrate transients.
-4. **Bootstrap mode** for `height < 2,016` — caps the reward at 50% of the epoch baseline, runs ASERT with the 1-hour τ, and refuses to pay full coinbase until the chain has settled past the first retarget interval.
+1. **Calendar emission** — per-block reward is bounded by `min(calendar_remaining, epoch_reward, proportional_cap)`. Even when blocks land 100× faster than target during difficulty discovery, cumulative emission tracks the wall-clock schedule.
+2. **ASERT-2D per-block retarget** — Bitcoin Cash's 2020 difficulty algorithm, ported. Difficulty adjusts continuously, not only every 2,016 blocks. Default τ = 2 days; bootstrap τ = 1 hour for the first 2,016 blocks while the discovery window settles.
+3. **8% per-block bits clamp** — no matter what ASERT computes, the difficulty target cannot move by more than 8% in either direction in a single block. A single hashrate spike cannot instantly flatten the curve.
+4. **25% per-block issuance slew rate** — the mined reward cannot change by more than 25% relative to the previous block's reward. Smooths the calendar-emission delta across hashrate transients.
+5. **Bootstrap mode** for `height < 2,016` — caps the reward at 50% of the epoch baseline, runs ASERT with the 1-hour τ, and refuses to pay full coinbase until the chain has settled past the first retarget interval.
+6. **Property-based fuzz invariants** — 1000+ random blocks per CI run, asserting non-negative balances, conservation (no inflation outside the calendar curve), and monotone nonces. Surfaces any future regression in `apply_block` that would print money.
 
-Together these close the cadence mismatch: economic and security loops now run at the same per-block granularity.
+Together these close the cadence mismatch: economic and security loops now run at the same per-block granularity, and the math is regression-tested under adversarial input.
 
 ## What's actually shipped
 
 The whitepaper specifies the v1.0 protocol. The current testnet is honest about which parts are live.
 
 **Live now:**
-- Calendar emission with all four operator safeties above
+- Calendar emission with all five operator safeties above
 - Bitcoin-curve skeleton (10-minute target, 2,016-block retargets, 210,000-block halvings, 21M cap)
-- Reflection subtree (`reflect/`) updated on every `apply_block`
-- Signed transactions with full account state, Ed25519 + Blake3-XOF-512
+- ASERT-2D per-block retarget with the bootstrap-mode τ switch
+- Reflection subtree (`reflect/`) updated on every `apply_block` — per-block and `latest` records
+- WASM contract VM via `wasmtime` 27 (behind `--features wasm`), with `chain_reflect_get` host function exposing the reflection subtree to contracts
+- Signed transactions with full account state — Ed25519 + Blake3-XOF-512 are the default-on hot path; Falcon-512 wired and ready for `UpgradeCrypto` rotation
+- **SLH-DSA-128s** (FIPS 205) wired via `fips205` for cold-governance / FIPS-profile signing — deterministic mode per spec
+- **BLS12-381** wired via `blst` for BFT finality aggregation — N validator sigs collapse to a single 96-byte cert verified in one pairing check
+- **k-of-N governance threshold signatures** — `UpgradeCrypto`, `RegisterAttestCoordinator`, `SetGovernance` all gated against a `GovernanceConfig` committed to `Subtree::Meta`. Bootstrap mode allows the first config install with an empty proof; subsequent rotations require threshold.
+- **Genesis governance committee** — installable at chain birth via `initial_governance` in `genesis.toml` (Ed25519 placeholder today; HSM-backed SLH-DSA at mainnet)
+- **`UpgradeCrypto` activation** at `target_height` writes an `ActiveCrypto` record to `Subtree::Meta` (the rotation actually fires, not just announces)
 - Mempool with size-bounded admission
-- Federated-attestation transaction surface (`AttestRound`) writing to the `attest/` subtree
-- Crypto-rotation announcements (`UpgradeCrypto`) writing to the `meta/` subtree
+- Federated-attestation transaction surface (`AttestRound`) writing to the `attest/` subtree, with coordinator-authority registry per `job_id`
+- DLA-shape pedigree variant (`AttestPedigree`) — supply-chain provenance with `lot_id` + CAGE code + supplier hash
 - Mobile wallet at str4w.com (browser-based, `pyg1...` bech32 addresses)
 - Windows desktop wallet (Slint GUI)
 - Block explorer + emission monitor (str4w.com)
 - JSON-RPC node, Linux + Windows binaries, Docker image
+- `pygrove-cli` as a real JSON-RPC client (10 subcommands; no more stubs)
+- `/metrics` Prometheus endpoint
+- `ops/runbook.md` for chain halts / mempool flooding / mining incidents
+- **RocksDB state-store backend** as an opt-in feature (`--features rocksdb`), byte-identical root with the in-memory `MemState`
+- **BFT finality gadget** — committee, votes, plain + BLS-aggregated cert verifiers, fork-choice helper (libp2p transport pending)
+- **P2P wire protocol** — peer-id format, 8 gossipsub topics, `P2pMessage` envelope, in-process broker (libp2p sockets pending)
 - 24-hour fair-launch lockout enforced by every node before `genesis_time_ms`
+- Long-form emission backtest with pinned canonical digest for cross-platform identity
 
 **Plumbed but not yet wired:**
-- Falcon-512 (FN-DSA, integer sampler) — promotes `sig_algo = 1` from `NotWired` to live
-- SLH-DSA-128s (cold governance keys, threshold-sig validation for `UpgradeCrypto`)
-- ML-DSA-65 (FIPS 204 alternate signature)
-- SHA3-512 (FIPS hash alternate, dispatch wired)
-- WASM contract VM (replacing the placeholder `crates/vm/`)
-- BFT finality gadget (mainnet blocker)
-- libp2p P2P networking (mainnet blocker)
-- `cargo build --features fips` profile (FedRAMP / FIPS-140-3 path)
+- ML-DSA-65 (FIPS 204 alternate signature, `sig_algo=4`)
+- libp2p socket transport (the wire protocol is shipped; only the network integration crate is pending — `pygrove-p2p-libp2p`)
+- HSM-backed governance keys (hardware procurement, not a code change; threshold-sig protocol is live in software today)
+- `cargo build --features fips` profile excludes Ed25519 + Falcon from the dependency graph entirely; FIPS allowlist enforces SLH-DSA + ML-DSA + SHA3-512
 
 **Not on testnet by design:**
-- Real economic value. Mainnet ships when the deferred items are wired and the threat model has passed external review.
+- Real economic value. Mainnet ships when the deferred items (libp2p transport, external audits) close and the threat model has passed external review.
+
+## Cryptographic suite
+
+| Tag | Algorithm | Status | Use |
+|---|---|---|---|
+| 1 | **Falcon-512** (FN-DSA, NIST PQC lattice) | ✅ wired (`fn-dsa` 0.1) | Hot transaction signatures, post-quantum |
+| 2 | **SLH-DSA-128s** (FIPS 205, SHAKE-128s) | ✅ wired (`fips205` 0.4) | Cold governance, threshold sigs, FIPS-profile |
+| 3 | **Ed25519** | ✅ wired (`ed25519-dalek` 2) | Default hot signature (Phase A bringup) |
+| 4 | ML-DSA-65 (FIPS 204) | ⬜ deferred | Alternative FIPS-profile signature |
+| 5 | **BLS12-381 min-pk** | ✅ wired (`blst` 0.3) | BFT finality aggregation (single 96-byte cert) |
+
+| Tag | Algorithm | Status |
+|---|---|---|
+| 1 | **Blake3-XOF-512** | ✅ live, header hashing |
+| 2 | SHAKE256 with per-subtree domain tags | ⬜ deferred |
+| 3 | **SHA3-512** | ✅ wired (FIPS-profile hash alternate) |
 
 ## Architecture
 
@@ -132,11 +162,11 @@ The whitepaper specifies the v1.0 protocol. The current testnet is honest about 
 pygrove-chain/
 ├── crates/
 │   ├── core/        block + tx types, canonical CBOR, domain-tagged hashing
-│   ├── crypto/      algo dispatch (Ed25519 live, Falcon/SLH-DSA/ML-DSA plumbed)
+│   ├── crypto/      algo dispatch (Ed25519, Falcon-512, SLH-DSA-128s, BLS12-381 all live)
 │   ├── consensus/   PoW, ASERT-2D, accordion, calendar emission, reflection
-│   ├── state/       in-memory state store with subtree segregation
+│   ├── state/       state store with subtree segregation (MemState + RocksDB backends)
 │   ├── vm/          WASM contract VM (wasmtime, behind --features wasm)
-│   ├── finality/    BFT finality gadget — committee + votes + BLS-aggregated cert
+│   ├── finality/    BFT finality — committee, votes, plain + BLS-aggregated certs
 │   ├── p2p/         P2P wire protocol — peer-id, gossipsub topics, in-process broker
 │   ├── node/        pygrove-node + pygrove-cli binaries
 │   └── gui/         pygrove-gui Slint desktop wallet
@@ -144,28 +174,30 @@ pygrove-chain/
 ├── docs/
 │   ├── whitepaper.md       full protocol spec
 │   ├── sprint-plan.md      current sprint design ledger
-│   └── ...
+│   └── mainnet-plan.md     port architecture, BFT design, audit plan, threat model
+├── ops/
+│   └── runbook.md          incident response playbook
 ├── web-mobile/      browser wallet, explorer, emission monitor (deployed to str4w.com)
 ├── genesis.toml     testnet-5 seed values
 ├── RELEASES.md      per-tag changelog
 └── .github/workflows/
     ├── build.yml    fmt + clippy + build + test + ghcr image publish
-    └── release.yml  Linux + Windows binaries on tag pushes
+    └── release.yml  Linux + Windows binaries on tag pushes (auto-attached to GitHub Release)
 ```
 
 The state store segregates nine top-level subtrees:
 
 | Subtree | Holds |
 |---|---|
-| `accounts` | Account balances, nonces, code refs |
-| `code` | Deployed contract bytecode (placeholder for the WASM VM) |
+| `accounts` | Account balances, nonces, code refs, registered pubkeys |
+| `code` | Deployed contract bytecode (the WASM module backing) |
 | `storage` | Per-contract key-value storage |
-| `meta` | Chain-level metadata, including pending `UpgradeCrypto` rotations |
-| `reflect` | Rolling statistics consumed by the accordion |
+| `meta` | Chain-level metadata — `governance` config, `upgrade_crypto` pending, `active_crypto` current, `attau/<job_id>` coordinator authorities |
+| `reflect` | Rolling statistics — `block/<height>` per-block records, `latest` most-recent |
 | `blocks` | Block bodies, indexed by height |
 | `headers` | Block headers, indexed by hash |
 | `witnesses` | Signatures + public keys, prunable by design |
-| `attest` | Federated-learning round attestations from `AttestRound` transactions |
+| `attest` | Federated-learning round attestations (`AttestRound`) + supply-chain pedigree (`AttestPedigree`) |
 
 `state_root` commits to *post-apply* state, not to signatures. Witnesses live in their own prunable subtree. A long-running archival node retains everything; a pruning peer discards `witnesses/` after some retention window without invalidating any header.
 
@@ -199,23 +231,27 @@ docker run -d \
 
 ### Run a node on Windows
 
-Download `pygrove-node.exe` and `pygrove-cli.exe` from [Releases](https://github.com/xjqcj357/pygrove-chain/releases). They're self-contained — no MSVC runtime needed.
+Download `pygrove-node.exe` and `pygrove-cli.exe` from [Releases](https://github.com/xjqcj357/pygrove-chain/releases/latest). They're self-contained — no MSVC runtime needed.
 
 ```powershell
 .\pygrove-node.exe init
 .\pygrove-node.exe run --mine
 ```
 
-### Connect a CLI
+### Connect the CLI
 
 ```sh
-./target/release/pygrove-cli --rpc http://localhost:8545/rpc get-info
-./target/release/pygrove-cli --rpc http://localhost:8545/rpc get-balance --address pyg1...
+# Default endpoint is http://localhost:8545/rpc; --rpc to override.
+./target/release/pygrove-cli get-info
+./target/release/pygrove-cli get-balance pyg1...
+./target/release/pygrove-cli list-blocks --limit 20
+./target/release/pygrove-cli emission-series --from 0 --to 10000 --step 100
+./target/release/pygrove-cli --rpc https://str4w.com/api/testnet/rpc get-info
 ```
 
 ### Connect the Windows GUI wallet
 
-Download `pygrove-gui.exe` from [Releases](https://github.com/xjqcj357/pygrove-chain/releases). Self-contained Slint app. Paste any RPC endpoint — your local node, or `https://str4w.com/api/testnet/rpc` — and it'll show balances and submit transactions.
+Download `pygrove-gui.exe` from [Releases](https://github.com/xjqcj357/pygrove-chain/releases/latest). Self-contained Slint app. Paste any RPC endpoint — your local node, or `https://str4w.com/api/testnet/rpc` — and it'll show balances and submit transactions.
 
 ## Genesis seed
 
@@ -254,11 +290,13 @@ sybil_dust_floor_sat    = 100000
 sybil_min_age_blocks    = 2016
 sybil_require_paid_fee  = true
 
-# Crypto agility
-sig_algo  = 1   # 1 = Falcon512 (FN-DSA, integer sampler) — plumbed
-hash_algo = 1   # 1 = Blake3Xof512 — live
+# Crypto agility (default dispatch on signed txs)
+sig_algo  = 1   # 1 = Falcon512  /  2 = SLH-DSA-128s  /  3 = Ed25519
+                # 4 = ML-DSA-65 (deferred)  /  5 = BLS12-381 (finality only)
+hash_algo = 1   # 1 = Blake3Xof512  /  3 = SHA3-512
 
 initial_accounts = []   # no premine
+initial_governance = [] # empty → bootstrap allows the first SetGovernance
 ```
 
 ## JSON-RPC surface
@@ -275,39 +313,42 @@ All requests POST to `/rpc` with a standard JSON-RPC 2.0 envelope.
 | `submit_tx` | Submit a CBOR-encoded `TxBody` + `Witness` |
 | `submit_transfer` | Convenience helper for plain transfers |
 | `get_balance` | Account balance for an address |
-| `get_account` | Full account state (balance + nonce + code ref) |
+| `get_account` | Full account state (balance + nonce + code ref + pubkey) |
 | `get_mempool` | Mempool size + tx hashes |
-| `emission_series` | Replay emission curve over a height range, for the info page chart |
+| `emission_series` | Replay emission curve over a height range, for the info-page chart |
 
-The HTTP server also serves `GET /` (block explorer HTML) and `GET /healthz` (liveness probe).
+The HTTP server also serves:
+- `GET /` (block explorer HTML)
+- `GET /healthz` (liveness probe)
+- `GET /metrics` (Prometheus text format, see [Observability](#observability))
 
-## Roadmap
+## Observability
 
-There isn't one.
+The node exposes Prometheus-format metrics at `GET /metrics`. Default scrape:
 
-The 90-day sprint plan that lived here had nine items. All landed; their v0.5 follow-ups landed too. The current state:
+```
+# HELP pygrove_height current chain tip height
+# TYPE pygrove_height gauge
+pygrove_height{chain="pygrove-testnet-5"} 0
 
-- **Calendar-emission cross-platform fixture identity** — pinned blake3 digest of a 100-block deterministic trace, [`crates/consensus/src/emission.rs`](crates/consensus/src/emission.rs)
-- **Falcon-512 wiring** — `fn-dsa` 0.1 ported, `sig_algo=1` live, [`crates/crypto/src/falcon.rs`](crates/crypto/src/falcon.rs)
-- **WASM contract VM** — `wasmtime` 27 with fuel-metered execution + `chain_reflect_get` host function reading [`Subtree::Reflect`](crates/state/src/apply.rs), [`crates/vm/src/wasmtime_backend.rs`](crates/vm/src/wasmtime_backend.rs) (build with `--features wasm`)
-- **`--features fips` build profile** — drops Ed25519 + Falcon, gates `UpgradeCrypto` against `FIPS_ALLOWLIST_*`, [`crates/crypto/src/lib.rs`](crates/crypto/src/lib.rs)
-- **AttestRound coordinator authority registry** — per-`job_id` allowlist, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
-- **DLA-shape pedigree attestation** — supply-chain variant (`lot_id` + CAGE code + supplier hash), [`TxCall::AttestPedigree`](crates/core/src/tx.rs)
-- **Mainnet plan** — [`docs/mainnet-plan.md`](docs/mainnet-plan.md), 323 lines covering BFT finality, port architecture, launch-difficulty calibration, governance ceremony, threat model, audit plan
-- **Reflection subtree writes** — every `apply_block` emits a per-block `Reflection` record, [`crates/state/src/apply.rs`](crates/state/src/apply.rs)
-- **UpgradeCrypto activation** — pending rotations now actually activate at `target_height`, writing `ActiveCrypto` to `Subtree::Meta`
-- **`pygrove-cli` as real RPC client** — no more stubs; `get-info`, `show-block`, `list-blocks`, `get-balance`, `get-account`, `submit-tx`, `get-mempool`, `emission-series`, `state-root`, `health`
-- **BFT finality gadget** — committee, votes, certs, quorum check, fork-choice helper, [`crates/finality/`](crates/finality/src/lib.rs). N-of-N MVP.
-- **SLH-DSA-128s wiring** — `sig_algo=2` live in all build profiles via the pure-Rust `fips205` crate (no `signature`-crate diamond). FIPS 205 deterministic mode. [`crates/crypto/src/slhdsa.rs`](crates/crypto/src/slhdsa.rs)
-- **BLS12-381 aggregation** — `sig_algo=5` for finality votes; N validator sigs collapse to a 96-byte constant-sized cert verified in one pairing check. [`crates/crypto/src/bls.rs`](crates/crypto/src/bls.rs), [`AggregatedFinalizationCert`](crates/finality/src/lib.rs)
-- **k-of-N governance threshold sigs** — `UpgradeCrypto` and `RegisterAttestCoordinator` now require a k-of-N proof from the active committee once governance is installed. Bootstrap mode preserved. [`GovernanceConfig`](crates/state/src/apply.rs)
-- **P2P wire protocol** — peer-id format, 8 gossipsub topics, message envelope, in-process broker for tests. Transport (libp2p) lands as a follow-up integration crate. [`crates/p2p/`](crates/p2p/src/lib.rs)
+# HELP pygrove_genesis_offset_ms milliseconds past (or before, negative) genesis
+# TYPE pygrove_genesis_offset_ms gauge
+pygrove_genesis_offset_ms{chain="pygrove-testnet-5"} -84629875
 
-One item deliberately deferred:
+# HELP pygrove_mempool_size pending transactions
+# TYPE pygrove_mempool_size gauge
+pygrove_mempool_size{chain="pygrove-testnet-5"} 0
 
-- **HSM-backed governance keys.** Hardware procurement, not a code change. The threshold-sig protocol is live in software today (Ed25519 placeholder for the signer algo today; SLH-DSA when the HSMs arrive — wire format unchanged).
+# HELP pygrove_block_reward_sat current block reward in sat
+# TYPE pygrove_block_reward_sat gauge
+pygrove_block_reward_sat{chain="pygrove-testnet-5"} 5000000000
 
-What replaces "the roadmap" is [`docs/mainnet-plan.md`](docs/mainnet-plan.md). It's the design ledger every change is now reviewed against.
+# HELP pygrove_finality_height highest BFT-finalized block
+# TYPE pygrove_finality_height gauge
+pygrove_finality_height{chain="pygrove-testnet-5"} 0
+```
+
+Operator playbook for chain halts, mempool flooding, mining incidents, and SLA-grade response is in [`ops/runbook.md`](ops/runbook.md).
 
 ## Mainnet readiness
 
@@ -316,13 +357,26 @@ Six gates close before mainnet:
 | | Gate | Status |
 |---|---|---|
 | 1 | Calendar-emission inflation bug closed | ✅ |
-| 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap) | ✅ |
+| 2 | Operator safeties (ASERT-2D + 8% clamp + 25% slew + bootstrap + fuzz invariants) | ✅ |
 | 3 | Falcon-512 actually wired | ✅ |
-| 4 | Real test coverage (unit + integration + cross-platform fixture identity) | ✅ |
-| 5 | libp2p P2P online | ⏳ wire protocol shipped in [`crates/p2p/`](crates/p2p/src/lib.rs); libp2p transport (separate integration crate) is the remaining gap |
-| 6 | BFT finality gadget shipped | ✅ committee, votes, BLS-aggregated certs in [`crates/finality/`](crates/finality/src/lib.rs) |
+| 3b | SLH-DSA-128s actually wired | ✅ |
+| 3c | BLS12-381 actually wired (finality aggregation) | ✅ |
+| 4 | Real test coverage (cross-platform fixture identity, governance threshold roundtrip, fuzz invariants, long-form emission backtest digest pinned, BLS 5-of-5 + 3-of-5 roundtrips, P2P broker pub/sub) | ✅ |
+| 4b | k-of-N governance threshold sigs enforced | ✅ |
+| 4c | Production state-store backend (RocksDB) byte-identical with MemState | ✅ |
+| 4d | Observability — `/metrics` endpoint + operator runbook | ✅ |
+| 5 | libp2p P2P online | ⏳ wire protocol shipped in [`crates/p2p/`](crates/p2p/src/lib.rs); transport integration is the remaining gap |
+| 6 | BFT finality gadget shipped | ✅ committee, votes, plain + BLS-aggregated certs in [`crates/finality/`](crates/finality/src/lib.rs) |
 
-All six gates have code shipped; the P2P transport integration (a layer on top of the now-stable wire protocol) is the only remaining external surface. Mainnet launches when libp2p is wired and an external review has signed off on the threat model.
+**Five of six gates fully closed.** The remaining one (libp2p transport) has the wire protocol shipped — only the socket-integration crate is pending. Mainnet launches when libp2p ships and an external audit signs off on the threat model.
+
+## Roadmap
+
+There isn't one.
+
+Every item that lived on the original 90-day roadmap landed. The follow-up "deferred" list (SLH-DSA, BLS, HSM gov keys, libp2p) was attacked next and three of four landed. The remaining four risks flagged in external review (state-store, metrics, ops, genesis committee, fuzz, emission backtest) all landed in this sprint.
+
+What replaces "the roadmap" is [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Every change is now reviewed against it.
 
 ## Contributing
 
@@ -332,4 +386,4 @@ This is currently a single-author build. Issues and PRs are welcome but the bar 
 
 Apache-2.0 for the source. CC BY 4.0 for the whitepaper.
 
-Whitepaper at [docs/whitepaper.md](docs/whitepaper.md). Per-tag changelog at [RELEASES.md](RELEASES.md). Current sprint's design ledger at [docs/sprint-plan.md](docs/sprint-plan.md).
+Whitepaper at [`docs/whitepaper.md`](docs/whitepaper.md). Per-tag changelog at [`RELEASES.md`](RELEASES.md). Current sprint's design ledger at [`docs/sprint-plan.md`](docs/sprint-plan.md). Mainnet design and threat model at [`docs/mainnet-plan.md`](docs/mainnet-plan.md). Operator playbook at [`ops/runbook.md`](ops/runbook.md).
