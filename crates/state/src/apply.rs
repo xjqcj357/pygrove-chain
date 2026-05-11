@@ -1812,7 +1812,7 @@ mod tests {
             let from = accounts[from_idx];
             let to = accounts[to_idx];
             let amount = (rng.range(2_000_000)) as u128; // sometimes > balance, exercises rejection
-            let fee = rng.range(1000) as u64;
+            let fee = rng.range(1000);
 
             let mut tx = TxBody {
                 nonce: nonces[from_idx],

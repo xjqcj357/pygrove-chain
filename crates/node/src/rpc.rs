@@ -413,14 +413,15 @@ fn html_ok(body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
 /// line, `name{labels} value` shape).
 ///
 /// Metrics exposed:
-///   - pygrove_height           — current chain tip height
-///   - pygrove_genesis_offset_ms — wall-clock ms past genesis (negative
-///                                 = pre-genesis lockout active)
-///   - pygrove_mempool_size     — txs currently in mempool
-///   - pygrove_block_reward_sat — current per-block reward
-///   - pygrove_bits             — current difficulty (compact form)
-///   - pygrove_minted_so_far_sat — cumulative coinbase emission
-///   - pygrove_chain_info{chain_id,sig_algo,hash_algo} — always 1
+///
+/// - `pygrove_height` — current chain tip height
+/// - `pygrove_genesis_offset_ms` — wall-clock ms past genesis
+///   (negative = pre-genesis lockout active)
+/// - `pygrove_mempool_size` — txs currently in mempool
+/// - `pygrove_block_reward_sat` — current per-block reward
+/// - `pygrove_bits` — current difficulty (compact form)
+/// - `pygrove_minted_so_far_sat` — cumulative coinbase emission
+/// - `pygrove_chain_info{chain_id,sig_algo,hash_algo}` — always 1
 ///
 /// Operational dashboards / alerts plug in via Prometheus scrape.
 fn prometheus_metrics(st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
