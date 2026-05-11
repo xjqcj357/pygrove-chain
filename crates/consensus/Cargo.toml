@@ -15,3 +15,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
+# Integration tests under `tests/` need blake3 in their own dep graph
+# even when the crate already lists it in [dependencies] — Rust
+# compiles integration tests as a separate package.
+blake3 = { workspace = true }
