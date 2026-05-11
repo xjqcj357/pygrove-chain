@@ -1626,6 +1626,12 @@ mod tests {
             tx.witness_hash = witness.hash();
             (tx, witness)
         };
+        // Note on nonces: pass 2 of apply_block commits nonce
+        // increments BEFORE the post-pass governance check fires.
+        // MemState has no transactional rollback (see apply_block
+        // docs), so a failed governance check still advances the
+        // sender's nonce. Each subsequent failed block has to use
+        // the NEXT nonce.
         let (no_proof_tx, no_proof_w) = mk_upgrade_tx(1, Vec::new());
         let mut h2 = empty_header();
         h2.height = 2;
@@ -1640,6 +1646,7 @@ mod tests {
             apply_block(&mut store, &block_no_proof, 50),
             Err(ApplyError::GovernanceProofMissing { .. })
         ));
+        // alice.nonce now 2 (pass-2 increment despite post-pass error).
 
         // --- Step 3: 1-of-3 proof — rejected as below threshold.
         let payload = upgrade_crypto_gov_payload(1_000, 1, 1);
@@ -1652,7 +1659,7 @@ mod tests {
         };
         let mut proof_cbor = Vec::new();
         ciborium::ser::into_writer(&proof_1of3, &mut proof_cbor).unwrap();
-        let (low_tx, low_w) = mk_upgrade_tx(1, proof_cbor);
+        let (low_tx, low_w) = mk_upgrade_tx(2, proof_cbor);
         let mut h3 = empty_header();
         h3.height = 3;
         let block_1of3 = Block {
@@ -1666,6 +1673,7 @@ mod tests {
             apply_block(&mut store, &block_1of3, 50),
             Err(ApplyError::GovernanceProofInvalid { .. })
         ));
+        // alice.nonce now 3.
 
         // --- Step 4: 2-of-3 proof — accepted.
         let g2_sig = crypto::sign(3, &g2_sk, &payload).unwrap();
@@ -1683,7 +1691,7 @@ mod tests {
         };
         let mut proof_cbor = Vec::new();
         ciborium::ser::into_writer(&proof_2of3, &mut proof_cbor).unwrap();
-        let (good_tx, good_w) = mk_upgrade_tx(1, proof_cbor);
+        let (good_tx, good_w) = mk_upgrade_tx(3, proof_cbor);
         let mut h4 = empty_header();
         h4.height = 4;
         let block_2of3 = Block {
