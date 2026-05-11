@@ -359,6 +359,7 @@ pub fn serve(bind: &str, state: Arc<NodeState>) -> anyhow::Result<()> {
             },
             (Method::Get, "/") | (Method::Get, "/index.html") => html_ok(EXPLORER_HTML),
             (Method::Get, "/healthz") => json_ok(200, &serde_json::json!({ "pygrove": "v0.1" })),
+            (Method::Get, "/metrics") => prometheus_metrics(&state),
             _ => json_err(404, "not found"),
         };
         let _ = req.respond(resp);
@@ -400,6 +401,110 @@ fn json_err(code: u16, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
 fn html_ok(body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let h: Header = "Content-Type: text/html; charset=utf-8".parse().unwrap();
     Response::from_string(body.to_string())
+        .with_status_code(200)
+        .with_header(h)
+}
+
+/// Prometheus exposition-format metrics over the running node state.
+///
+/// Sampled live on each GET — no background aggregator, no async. Costs
+/// one mutex lock on the chain store + mempool. Output follows the
+/// Prometheus text-format spec (HELP + TYPE comments, one metric per
+/// line, `name{labels} value` shape).
+///
+/// Metrics exposed:
+///   - pygrove_height           — current chain tip height
+///   - pygrove_genesis_offset_ms — wall-clock ms past genesis (negative
+///                                 = pre-genesis lockout active)
+///   - pygrove_mempool_size     — txs currently in mempool
+///   - pygrove_block_reward_sat — current per-block reward
+///   - pygrove_bits             — current difficulty (compact form)
+///   - pygrove_minted_so_far_sat — cumulative coinbase emission
+///   - pygrove_chain_info{chain_id,sig_algo,hash_algo} — always 1
+///
+/// Operational dashboards / alerts plug in via Prometheus scrape.
+fn prometheus_metrics(st: &NodeState) -> Response<std::io::Cursor<Vec<u8>>> {
+    let chain_store = &st.store;
+    let height = chain_store.height().unwrap_or(0);
+    let mempool_size = st.mempool.len();
+    let minted = st
+        .minted_so_far
+        .lock()
+        .map(|g| *g)
+        .unwrap_or(0u128);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i128)
+        .unwrap_or(0);
+    let offset_ms = now_ms - st.genesis_time_ms as i128;
+
+    let mut out = String::with_capacity(2048);
+    use std::fmt::Write;
+
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_height Current chain tip height.\n\
+         # TYPE pygrove_height gauge\n\
+         pygrove_height {height}"
+    );
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_genesis_offset_ms Wall-clock ms past genesis. Negative = pre-genesis lockout.\n\
+         # TYPE pygrove_genesis_offset_ms gauge\n\
+         pygrove_genesis_offset_ms {offset_ms}"
+    );
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_mempool_size Number of transactions waiting in the mempool.\n\
+         # TYPE pygrove_mempool_size gauge\n\
+         pygrove_mempool_size {mempool_size}"
+    );
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_block_reward_sat Current per-block reward in satoshi (pre-halving-1 nominal).\n\
+         # TYPE pygrove_block_reward_sat gauge\n\
+         pygrove_block_reward_sat {}",
+        st.block_reward_sat
+    );
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_bits Current difficulty target (Bitcoin compact-bits form).\n\
+         # TYPE pygrove_bits gauge\n\
+         pygrove_bits {}",
+        st.bits
+    );
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_minted_so_far_sat Cumulative coinbase emission (including fees collected).\n\
+         # TYPE pygrove_minted_so_far_sat counter\n\
+         pygrove_minted_so_far_sat {minted}"
+    );
+    // Chain-identity info metric (Prometheus convention: always-1 gauge
+    // with the descriptive fields as labels). Lets a dashboard scope
+    // alerts to chain_id without scraping JSON.
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_chain_info Chain identity labels.\n\
+         # TYPE pygrove_chain_info gauge\n\
+         pygrove_chain_info{{chain_id=\"{}\",sig_algo=\"{}\",hash_algo=\"{}\"}} 1",
+        st.chain_id, st.sig_algo, st.hash_algo
+    );
+    // Build info — git sha at compile time, version. The compile-env
+    // values fall through to "unknown" if not set; that's a deployment
+    // hygiene check ops can alert on.
+    let _ = writeln!(
+        out,
+        "# HELP pygrove_build_info Build identity (git sha, version).\n\
+         # TYPE pygrove_build_info gauge\n\
+         pygrove_build_info{{version=\"{}\",git_sha=\"{}\"}} 1",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("PYGROVE_GIT_SHA").unwrap_or("unknown")
+    );
+
+    let h: Header = "Content-Type: text/plain; version=0.0.4; charset=utf-8"
+        .parse()
+        .unwrap();
+    Response::from_string(out)
         .with_status_code(200)
         .with_header(h)
 }

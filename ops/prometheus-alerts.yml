@@ -1,0 +1,88 @@
+# PyGrove Chain — Recommended Prometheus alert rules.
+#
+# Scope: SEV-0 + SEV-1 conditions on a single-node deployment. Multi-node /
+# committee-aware alerts ship with the libp2p + BFT-finality rollout.
+#
+# Tier definitions: see docs/runbook.md.
+
+groups:
+  # ------------------------------- SEV-0 -------------------------------
+  - name: pygrove-sev0
+    interval: 30s
+    rules:
+      - alert: PygroveNodeDown
+        expr: absent(pygrove_height)
+        for: 3m
+        labels:
+          severity: sev0
+          team: pygrove-ops
+        annotations:
+          summary: "pygrove-node /metrics has stopped responding"
+          description: |
+            The Prometheus scrape can't reach pygrove-node. Either the
+            container is down or the host is unreachable.
+          runbook: "https://github.com/xjqcj357/pygrove-chain/blob/main/docs/runbook.md#sev-0-pygrove-node-container-is-down"
+
+      - alert: PygroveHeightStalled
+        # Chain advancing condition: tip height should increase at least
+        # once per nominal block interval. Allowing 3x slack for slow
+        # blocks during difficulty discovery.
+        expr: rate(pygrove_height[20m]) == 0 and pygrove_genesis_offset_ms > 0
+        for: 30m
+        labels:
+          severity: sev0
+          team: pygrove-ops
+        annotations:
+          summary: "No new blocks for 30 min past genesis"
+          description: |
+            pygrove_height has not advanced in 20 minutes and we're past
+            genesis_time. Likely causes: miner stalled, difficulty far
+            above expected, or upstream peer churn.
+          runbook: "https://github.com/xjqcj357/pygrove-chain/blob/main/docs/runbook.md#sev-0-chain-halted-no-new-blocks--30-min-post-launch"
+
+  # ------------------------------- SEV-1 -------------------------------
+  - name: pygrove-sev1
+    interval: 30s
+    rules:
+      - alert: PygroveMempoolFlood
+        # Mempool depth above sustained spam threshold for 10 min.
+        expr: pygrove_mempool_size > 50000
+        for: 10m
+        labels:
+          severity: sev1
+          team: pygrove-ops
+        annotations:
+          summary: "Mempool depth above flood threshold"
+          description: |
+            pygrove_mempool_size > 50,000 for > 10 min. Likely a
+            fee-paying spammer. Cost-to-flood is finite; investigate the
+            tx pattern and raise the fee floor if persistent.
+
+      - alert: PygroveLockoutPastDue
+        # If genesis_offset_ms is still negative more than 2h past the
+        # planned launch window, ops has missed the window — either a
+        # clock-skew issue or a deliberate hold.
+        expr: pygrove_genesis_offset_ms < 0 and pygrove_genesis_offset_ms > -7200000
+        for: 30m
+        labels:
+          severity: sev1
+          team: pygrove-ops
+        annotations:
+          summary: "Pre-genesis lockout in the final 2 hours of the announce window"
+          description: |
+            The lockout is dropping in < 2h. This isn't an outage — it's
+            a "make sure ops is awake for the launch" alert.
+
+      - alert: PygroveBuildInfoUnknown
+        # If git_sha label is "unknown", we shipped a build that wasn't
+        # tagged at compile time — operational hygiene fail.
+        expr: pygrove_build_info{git_sha="unknown"} > 0
+        for: 1h
+        labels:
+          severity: sev2
+          team: pygrove-ops
+        annotations:
+          summary: "Running an untagged build (git_sha=unknown)"
+          description: |
+            Set PYGROVE_GIT_SHA at compile time so the production binary
+            carries a build identity for audit.

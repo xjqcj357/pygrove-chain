@@ -1,0 +1,67 @@
+[Unit]
+Description=PyGrove Chain node (systemd-managed Docker container)
+Documentation=https://github.com/xjqcj357/pygrove-chain/blob/main/docs/runbook.md
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+# Use Docker as the runtime; systemd watches the container lifecycle.
+# An equivalent native-binary unit ships as `pygrove-node-native.service`
+# once a `pygrove-node` binary release is in place.
+Type=exec
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+# Ensure no stale container before we start.
+ExecStartPre=-/usr/bin/docker stop pygrove-node
+ExecStartPre=-/usr/bin/docker rm pygrove-node
+
+# Always pull the canonical tag first so a restart picks up the latest
+# verified image. Operators pin to a specific :vX.Y.Z tag here for
+# production stability; :latest is fine on testnet.
+ExecStartPre=/usr/bin/docker pull ghcr.io/xjqcj357/pygrove-chain:latest
+
+# Foreground container so systemd can monitor it directly.
+ExecStart=/usr/bin/docker run --rm \
+    --name pygrove-node \
+    --network pygrove-net \
+    -p 8545:8545 \
+    -v pygrove-data:/var/lib/pygrove \
+    --read-only \
+    --tmpfs /tmp:size=64m \
+    --cap-drop=ALL \
+    --security-opt no-new-privileges:true \
+    --pids-limit 256 \
+    --memory=2g \
+    --cpus=2 \
+    ghcr.io/xjqcj357/pygrove-chain:latest
+
+ExecStop=/usr/bin/docker stop pygrove-node
+
+# Restart policy: always come back, but with a delay so a crashloop
+# doesn't spam logs at 100% CPU.
+Restart=always
+RestartSec=10
+
+# Hardening (applies to the systemd wrapper itself, not the container —
+# the container has --cap-drop=ALL --no-new-privileges above).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false  # docker client needs JIT regions in some libs
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pygrove-node
+
+[Install]
+WantedBy=multi-user.target
