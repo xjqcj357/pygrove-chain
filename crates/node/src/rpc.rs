@@ -62,6 +62,11 @@ pub struct NodeState {
     /// `emission.max_reward_pct_change_per_block` percent across consecutive
     /// blocks. `None` until the first non-genesis block lands.
     pub prev_reward_sat: Mutex<Option<u128>>,
+    /// ASERT-2D τ in milliseconds for post-bootstrap blocks. Default 2 days.
+    pub asert_tau_ms: u64,
+    /// ASERT-2D τ for the bootstrap window. Tighter (default 1 hour) so the
+    /// difficulty-discovery loop converges quickly.
+    pub bootstrap_asert_tau_ms: u64,
 }
 
 /// Bitcoin's clock-skew tolerance — a header timestamp may be at most this
@@ -961,13 +966,15 @@ pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
 
     let hdr = &block.header;
     let tip = st.store.tip()?;
-    let (expected_parent, expected_height, parent_ts) = match tip {
+    let (expected_parent, expected_height, parent_ts, parent_bits, parent_height) = match &tip {
         Some(b) => (
             hash_header(&b.header),
             b.header.height + 1,
             b.header.timestamp_ms,
+            b.header.bits,
+            b.header.height,
         ),
-        None => ([0u8; 32], 0, 0),
+        None => ([0u8; 32], 0, 0, st.bits, 0),
     };
     if hdr.parent != expected_parent {
         anyhow::bail!("stale parent");
@@ -979,8 +986,32 @@ pub fn try_apply_block(st: &NodeState, block: &Block) -> anyhow::Result<()> {
             expected_height
         );
     }
-    if hdr.bits != st.bits {
-        anyhow::bail!("wrong bits");
+    // Bits enforcement: the very first block (height=1, no parent recorded
+    // at genesis-only state? in practice tip is always the genesis block, so
+    // parent_bits == st.bits there) must match what ASERT-2D computes from
+    // (parent_bits, parent_timestamp, hdr.timestamp). Drift here is exactly
+    // the bug that made testnet-5's first run mine at constant 0x1f00ffff:
+    // both the miner and this check now go through the SAME
+    // `next_bits_from_parent` so they cannot diverge.
+    let expected_bits = pygrove_consensus::next_bits_from_parent(
+        parent_bits,
+        parent_height,
+        parent_ts,
+        hdr.timestamp_ms,
+        st.target_block_time_ms,
+        st.emission.bootstrap_height,
+        st.bootstrap_asert_tau_ms,
+        st.asert_tau_ms,
+    );
+    if hdr.bits != expected_bits {
+        anyhow::bail!(
+            "wrong bits: got {:#010x} expected {:#010x} (parent_bits={:#010x} at h={} ts={})",
+            hdr.bits,
+            expected_bits,
+            parent_bits,
+            parent_height,
+            parent_ts
+        );
     }
     // 2. Monotonic time: a block may not be timestamped before its parent.
     if hdr.timestamp_ms < parent_ts {

@@ -31,6 +31,39 @@ pub fn target_from_bits(bits: u32) -> [u8; 32] {
     target
 }
 
+/// Inverse of [`target_from_bits`]: a 256-bit big-endian target → the compact
+/// `bits` representation. Mirrors Bitcoin's nBits encoding rules:
+///   - `exponent` = number of bytes from the leading non-zero down to the end.
+///   - `mantissa` = 3 most-significant bytes of the target.
+///   - If the mantissa's MSB has bit `0x80` set (would be read as "negative"
+///     in the compact format), shift mantissa right by 8 and bump exponent
+///     by 1 to keep the encoding canonical and positive.
+///
+/// A round-trip property holds for any `bits` produced via this function:
+/// `bits_from_target(&target_from_bits(b)) == b` after normalisation.
+pub fn bits_from_target(target: &[u8; 32]) -> u32 {
+    let leading_zeros = target.iter().take_while(|&&b| b == 0).count();
+    if leading_zeros >= 32 {
+        return 0; // target is all zeros — invalid in practice
+    }
+    let mut exponent = 32 - leading_zeros; // bytes the target spans, [1, 32]
+    let mut mantissa: u32 = 0;
+    for i in 0..3 {
+        let idx = leading_zeros + i;
+        let b = if idx < 32 { target[idx] } else { 0 };
+        mantissa = (mantissa << 8) | (b as u32);
+    }
+    // Bitcoin convention: keep mantissa "positive" (MSB clear), shift if not.
+    if mantissa & 0x0080_0000 != 0 {
+        mantissa >>= 8;
+        exponent += 1;
+    }
+    if exponent > 0xff {
+        return 0; // shouldn't happen for any legal target
+    }
+    ((exponent as u32) << 24) | (mantissa & 0x007f_ffff)
+}
+
 /// Canonical, deterministic header preimage. The bytes here, and only these bytes,
 /// feed the PoW hash. Any new field on `BlockHeader` must be appended here.
 fn header_preimage(header: &BlockHeader) -> Vec<u8> {
@@ -107,6 +140,40 @@ mod tests {
         let a = hash_header(&dummy_header(0));
         let b = hash_header(&dummy_header(1));
         assert_ne!(a, b);
+    }
+
+    /// `bits_from_target(target_from_bits(b)) == b` for canonical inputs.
+    /// Drift here is a consensus break.
+    #[test]
+    fn bits_target_roundtrip() {
+        for b in [
+            0x1f00ffffu32, // testnet-5 initial
+            0x1e00ffff,
+            0x1d00ffff,
+            0x1c00ffff,
+            0x1d7fffff,
+            0x1f7fffff,
+        ] {
+            let t = target_from_bits(b);
+            let b2 = bits_from_target(&t);
+            assert_eq!(b, b2, "round-trip drift for bits=0x{b:08x}: t={t:?} -> {b2:#010x}");
+        }
+    }
+
+    /// Bits-from-target of a zeroed-out leading byte after the original
+    /// encoding's exponent. Sanity check that we handle the
+    /// MSB-of-mantissa-is-0x80 normalisation correctly.
+    #[test]
+    fn bits_from_target_handles_msb_normalisation() {
+        // Manually crafted target whose leading byte is 0x80 — the encoder
+        // should treat this as exponent+1 with mantissa shifted right.
+        let mut target = [0u8; 32];
+        target[5] = 0x80;
+        let bits = bits_from_target(&target);
+        // Decode back and confirm it represents the same value.
+        let round = target_from_bits(bits);
+        // The high byte should be preserved.
+        assert_eq!(round[5], 0x80, "target high byte preserved across round-trip");
     }
 
     #[test]

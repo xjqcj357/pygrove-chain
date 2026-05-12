@@ -249,6 +249,8 @@ fn cmd_run(
         emission: emission_params,
         minted_so_far: Mutex::new(minted_so_far),
         prev_reward_sat: Mutex::new(prev_reward),
+        asert_tau_ms: g.asert_tau_ms,
+        bootstrap_asert_tau_ms: g.bootstrap_asert_tau_ms,
     });
     let now = mining::now_ms();
     if now < g.genesis_time_ms {
@@ -277,7 +279,6 @@ fn cmd_run(
 }
 
 fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
-    let target = target_from_bits(st.bits);
     loop {
         // Hard gate: don't even build templates while pre-genesis. Saves CPU
         // and keeps the log quiet during the lockout window.
@@ -302,14 +303,30 @@ fn self_miner_loop(st: Arc<NodeState>, throttle_ms: u64) {
         let txs: Vec<TxBody> = pending.iter().map(|p| p.body.clone()).collect();
         let witnesses: Vec<Witness> = pending.iter().map(|p| p.witness.clone()).collect();
         let body = BlockBody { txs, witnesses };
+        let block_ts = now_ms();
+        // Per-block difficulty via ASERT-2D. This is the single source of
+        // truth — `try_apply_block` will re-derive the expected bits the
+        // same way and reject any header that disagrees. So we MUST go
+        // through `next_bits_from_parent` here.
+        let new_bits = pygrove_consensus::next_bits_from_parent(
+            tip.header.bits,
+            tip.header.height,
+            tip.header.timestamp_ms,
+            block_ts,
+            st.target_block_time_ms,
+            st.emission.bootstrap_height,
+            st.bootstrap_asert_tau_ms,
+            st.asert_tau_ms,
+        );
+        let target = target_from_bits(new_bits);
         let mut hdr = template_from_parent_with_body(
             parent_hash,
             tip.header.height,
-            st.bits,
+            new_bits,
             st.coinbase,
             st.sig_algo,
             st.hash_algo,
-            now_ms(),
+            block_ts,
             &body,
         );
         let start = std::time::Instant::now();

@@ -72,6 +72,47 @@ fn pow2_q16(num: i128, den: i128) -> i128 {
 }
 
 /// Compute the new target for `new_block` from an anchor (typically the
+/// Compute the next block's `bits` from its parent's bits + timestamp.
+///
+/// Single source of truth for the chain's per-block difficulty:
+/// - Picks the right `tau` based on whether we're in bootstrap mode
+///   (`parent_height + 1 < bootstrap_height` → tighter `bootstrap_asert_tau_ms`).
+/// - Calls [`asert_target`] to get the new 256-bit target.
+/// - Encodes the target back to compact `bits` via
+///   [`crate::pow::bits_from_target`].
+///
+/// The miner calls this when building a template; the validator calls
+/// the same function to re-derive `expected_bits` and reject any header
+/// whose `bits` disagrees. Drift between miner and validator here is a
+/// consensus split, so both go through this one entry point.
+pub fn next_bits_from_parent(
+    parent_bits: u32,
+    parent_height: u64,
+    parent_timestamp_ms: u64,
+    new_block_timestamp_ms: u64,
+    target_block_time_ms: u64,
+    bootstrap_height: u64,
+    bootstrap_asert_tau_ms: u64,
+    asert_tau_ms: u64,
+) -> u32 {
+    let new_height = parent_height + 1;
+    let tau_ms = if new_height < bootstrap_height {
+        bootstrap_asert_tau_ms
+    } else {
+        asert_tau_ms
+    };
+    let target = asert_target(
+        parent_bits,
+        parent_timestamp_ms,
+        parent_height,
+        new_block_timestamp_ms,
+        new_height,
+        target_block_time_ms,
+        tau_ms,
+    );
+    crate::pow::bits_from_target(&target)
+}
+
 /// parent), using ASERT-2D. Returns the target as a 256-bit big-endian byte
 /// array (matching `pow::target_from_bits` output).
 ///
