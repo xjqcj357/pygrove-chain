@@ -85,6 +85,12 @@ fn pow2_q16(num: i128, den: i128) -> i128 {
 /// the same function to re-derive `expected_bits` and reject any header
 /// whose `bits` disagrees. Drift between miner and validator here is a
 /// consensus split, so both go through this one entry point.
+///
+/// The 8-arg signature is necessary — this is a stateless wrapper over
+/// `asert_target` that also picks the right tau based on the bootstrap
+/// boundary. Grouping into a struct would just push the same fields
+/// one level out, with no clarity gain at the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn next_bits_from_parent(
     parent_bits: u32,
     parent_height: u64,
