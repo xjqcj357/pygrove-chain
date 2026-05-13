@@ -4,9 +4,9 @@ A small proof-of-work blockchain that listens to itself.
 
 It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retargets, halvings every 210,000 blocks, a 21,000,000-coin hard cap — and adds a measured kind of self-awareness on top. The chain reads its own statistics from a dedicated subtree of its own state. Emission breathes with hashrate and adoption inside that information. The cryptography is post-quantum where it can be, agile where it can't. The design horizon is 127 years.
 
-> **Status:** `pygrove-testnet-5` is in its 24-hour public-announcement window. The lockout drops at **2026-05-12 21:27:23 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window.
+> **Status:** `pygrove-testnet-6` is in its 24-hour public-announcement window. The lockout drops at **2026-05-14 00:00:20 UTC**, after which block 1 can be mined. Until then, every node refuses to extend the chain — the source has been public, in this repo, for the entire window.
 >
-> Three earlier testnets (`-2`, `-3`, `-4`) were retired pre-launch as each sprint folded in new surface that wasn't worth shipping a fresh inflation-prone genesis for. Testnet-5 is the first launch where every closeable risk has been closed.
+> Five earlier testnets (`-2`, `-3`, `-4`, `-5`) preceded this one. Testnet-5 actually launched briefly but hit a difficulty-retarget bug — `try_apply_block` had `if hdr.bits != st.bits { bail!() }`, forcing every block to the *initial* genesis bits forever and preventing ASERT-2D from firing. Blocks landed in milliseconds. Testnet-6 wires both the miner and the validator through the same `next_bits_from_parent()` helper so they cannot diverge; per-block bits are now computed from parent (bits, timestamp) and validated on submit.
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ It inherits Bitcoin's economic skeleton — 10-minute blocks, 2,016-block retarg
 
 ## Where it lives
 
-The fifth public testnet (`pygrove-testnet-5`) opens on **2026-05-12 21:27:23 UTC**. You can touch it at:
+The sixth public testnet (`pygrove-testnet-6`) opens on **2026-05-14 00:00:20 UTC**. You can touch it at:
 
 - **Wallet** — [str4w.com](https://str4w.com/), works on any phone or browser
 - **Block explorer** — [str4w.com/explorer](https://str4w.com/explorer/), with a live launch-countdown banner until block 1 lands
@@ -56,9 +56,9 @@ cargo build --release --bin pygrove-node
 
 The genesis hash is a pure function of the seed values in [`genesis.toml`](genesis.toml). Three independent properties make the launch credible:
 
-The first is the **24-hour announce window.** `genesis_time_ms` is `2026-05-12 21:27:23 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
+The first is the **24-hour announce window.** `genesis_time_ms` is `2026-05-14 00:00:20 UTC`. Every node refuses to accept a block whose timestamp is earlier than that; the in-process miner refuses to even submit one. There is no path by which a peer-with-source can produce coin before the window closes.
 
-The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of the Bitcoin block mined a few minutes before the testnet-5 seed was committed — `000000000000000000020060068bc7e3e47b15b37a716a4a72a6172ade19017f`. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that BTC block existed.
+The second is the **proof-of-no-prior-knowledge headline.** The genesis coinbase carries the hash of the Bitcoin block mined a few minutes before the testnet-6 seed was committed — `0000000000000000000054f816d4e95007fb5ddd141c999a43e9c4ee56aefca3`. Bitcoin's own difficulty is the timestamp authority: this seed could not have been constructed before that BTC block existed.
 
 The third is the **byte-deterministic genesis.** Given the seed values, `pygrove-node init` is a pure function. The canonical genesis tip hash will be pinned in [RELEASES.md](RELEASES.md) when v0.5.0 is tagged so any auditor can compare their local build against the chain's claim.
 
@@ -88,7 +88,7 @@ The fifth is **crypto agility from block zero.** Every signature carries a one-b
 
 ## Operator safeties
 
-Testnet-2 exposed a **cadence-mismatch bug**: the economic adaptation layer (block reward minted per block) ran 5–6 orders of magnitude faster than the security stabilization layer (difficulty retarget every 2,016 blocks). At launch with hashrate above the implied target, half a million PYG could mint in the difficulty-discovery window before retarget caught up. Total cap held in aggregate; distribution was indistinguishable from a premine. Testnet-5 inherits the testnet-3 fix and stacks more on top:
+Testnet-2 exposed a **cadence-mismatch bug**: the economic adaptation layer (block reward minted per block) ran 5–6 orders of magnitude faster than the security stabilization layer (difficulty retarget every 2,016 blocks). At launch with hashrate above the implied target, half a million PYG could mint in the difficulty-discovery window before retarget caught up. Total cap held in aggregate; distribution was indistinguishable from a premine. Testnet-6 inherits the testnet-3 fix and stacks more on top:
 
 1. **Calendar emission** — per-block reward is bounded by `min(calendar_remaining, epoch_reward, proportional_cap)`. Even when blocks land 100× faster than target during difficulty discovery, cumulative emission tracks the wall-clock schedule.
 2. **ASERT-2D per-block retarget** — Bitcoin Cash's 2020 difficulty algorithm, ported. Difficulty adjusts continuously, not only every 2,016 blocks. Default τ = 2 days; bootstrap τ = 1 hour for the first 2,016 blocks while the discovery window settles.
@@ -178,7 +178,7 @@ pygrove-chain/
 ├── ops/
 │   └── runbook.md          incident response playbook
 ├── web-mobile/      browser wallet, explorer, emission monitor (deployed to str4w.com)
-├── genesis.toml     testnet-5 seed values
+├── genesis.toml     testnet-6 seed values
 ├── RELEASES.md      per-tag changelog
 └── .github/workflows/
     ├── build.yml    fmt + clippy + build + test + ghcr image publish
@@ -215,7 +215,7 @@ cargo build --release --bin pygrove-node --bin pygrove-cli
 
 # run with the in-process miner attached
 ./target/release/pygrove-node run --mine
-# until 2026-05-12 21:27:23 UTC, you'll see "PRE-GENESIS: submit_block locked"
+# until 2026-05-14 00:00:20 UTC, you'll see "PRE-GENESIS: submit_block locked"
 ```
 
 ### Run a node from Docker
@@ -258,10 +258,10 @@ Download `pygrove-gui.exe` from [Releases](https://github.com/xjqcj357/pygrove-c
 Pinned in [`genesis.toml`](genesis.toml) at the root of the repo:
 
 ```toml
-chain_id              = "pygrove-testnet-5"
-genesis_time_ms       = 1778621243000          # 2026-05-12 21:27:23 UTC
-genesis_headline_hex  = "000000000000000000020060068bc7e3e47b15b37a716a4a72a6172ade19017f"
-                                               # ^ Latest BTC tip at testnet-5 seed time
+chain_id              = "pygrove-testnet-6"
+genesis_time_ms       = 1778716820000          # 2026-05-14 00:00:20 UTC
+genesis_headline_hex  = "0000000000000000000054f816d4e95007fb5ddd141c999a43e9c4ee56aefca3"
+                                               # ^ Latest BTC tip at testnet-6 seed time
 
 initial_bits          = 0x1f00ffff             # laptop-mineable initial difficulty
 target_block_time_ms  = 600000                 # 10 minutes
@@ -329,23 +329,23 @@ The node exposes Prometheus-format metrics at `GET /metrics`. Default scrape:
 ```
 # HELP pygrove_height current chain tip height
 # TYPE pygrove_height gauge
-pygrove_height{chain="pygrove-testnet-5"} 0
+pygrove_height{chain="pygrove-testnet-6"} 0
 
 # HELP pygrove_genesis_offset_ms milliseconds past (or before, negative) genesis
 # TYPE pygrove_genesis_offset_ms gauge
-pygrove_genesis_offset_ms{chain="pygrove-testnet-5"} -84629875
+pygrove_genesis_offset_ms{chain="pygrove-testnet-6"} -84629875
 
 # HELP pygrove_mempool_size pending transactions
 # TYPE pygrove_mempool_size gauge
-pygrove_mempool_size{chain="pygrove-testnet-5"} 0
+pygrove_mempool_size{chain="pygrove-testnet-6"} 0
 
 # HELP pygrove_block_reward_sat current block reward in sat
 # TYPE pygrove_block_reward_sat gauge
-pygrove_block_reward_sat{chain="pygrove-testnet-5"} 5000000000
+pygrove_block_reward_sat{chain="pygrove-testnet-6"} 5000000000
 
 # HELP pygrove_finality_height highest BFT-finalized block
 # TYPE pygrove_finality_height gauge
-pygrove_finality_height{chain="pygrove-testnet-5"} 0
+pygrove_finality_height{chain="pygrove-testnet-6"} 0
 ```
 
 Operator playbook for chain halts, mempool flooding, mining incidents, and SLA-grade response is in [`ops/runbook.md`](ops/runbook.md).

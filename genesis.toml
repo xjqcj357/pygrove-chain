@@ -1,4 +1,4 @@
-# PyGrove Chain — TESTNET-5 genesis (24-hour announce window)
+# PyGrove Chain — TESTNET-6 genesis (24-hour announce window)
 #
 # Fair-launch ceremony (24-hour public-announcement window):
 #   - genesis_time_ms is a future, publicly-announced wall-clock time.
@@ -9,21 +9,29 @@
 #   - 24-hour announce window: nobody can mine until the wall clock catches up,
 #     so anyone can spin up a node from a clean clone before block 1 lands.
 #
-# What's new in testnet-5 (the risk-hardening sprint, landed pre-launch):
-#   - **RocksDB state-store backend** as an opt-in feature, byte-identical
-#     root with MemState (same domain-tag chain).
-#   - **/metrics endpoint** (Prometheus text format) exposing height,
-#     genesis_offset_ms, mempool_size, block_reward_sat, finality height.
-#   - **ops/runbook.md** covering chain halts, mempool flooding, mining
-#     incident response.
-#   - **Genesis governance committee** can be installed at genesis time
-#     via `initial_governance` in `genesis.toml` (Ed25519 placeholder
-#     for now; HSM-backed SLH-DSA at mainnet).
-#   - **Property-based fuzz test** for `apply_block` invariants:
-#     non-negative balances, conservation, monotone nonces. 1000+ random
-#     blocks per run.
-#   - **Long-form emission backtest** (210,000-block sweep) with pinned
-#     canonical digest 921ebf27… for cross-platform identity.
+# What's new in testnet-6 (the difficulty-retarget fix):
+#   - **ASERT-2D actually wired into miner + validator**. Both now go
+#     through the same `next_bits_from_parent()` helper so the chain's
+#     per-block difficulty target updates from parent (bits, timestamp).
+#     Bits are no longer stuck at 0x1f00ffff. With the 8% per-block
+#     clamp + tighter bootstrap τ (1 hour vs 2 days post-bootstrap), the
+#     discovery loop converges to actual hashrate over ~50-100 blocks.
+#   - **`bits_from_target()`**, the missing inverse of `target_from_bits`,
+#     with full round-trip test coverage and the Bitcoin-canonical
+#     0x80-MSB normalisation step. Without it, the miner couldn't encode
+#     an ASERT-derived target back into the compact `bits` field.
+#   - **Bits-mismatch consensus check** in `try_apply_block`. The old
+#     binary had `if hdr.bits != st.bits { bail!("wrong bits") }` which
+#     forced every block to use the *initial* genesis bits forever — the
+#     literal cause of the testnet-5 zero-retarget bug. The new validator
+#     re-derives the expected bits from parent and rejects mismatches.
+#
+# What's preserved from testnet-5:
+#   - RocksDB state-store backend (opt-in via --features rocksdb)
+#   - /metrics Prometheus endpoint
+#   - ops/runbook.md operator playbook
+#   - Property-based fuzz invariants for apply_block
+#   - Long-form emission backtest digest (921ebf27…) pinned for CI
 #
 # What's preserved from testnet-4:
 #   - SLH-DSA-128s (sig_algo=2), BLS12-381 (sig_algo=5), Falcon-512,
@@ -38,10 +46,10 @@
 #     + bootstrap mode for the first 2,016 blocks
 #   - Same `pyg1...` address format. Keys carry forward.
 
-chain_id                = "pygrove-testnet-5"
-genesis_time_ms         = 1778621243000        # 2026-05-12 21:27:23 UTC (+24h announce window)
-genesis_headline_hex    = "000000000000000000020060068bc7e3e47b15b37a716a4a72a6172ade19017f"
-# ^ Latest BTC tip at testnet-5 seed time. Embedded into the genesis
+chain_id                = "pygrove-testnet-6"
+genesis_time_ms         = 1778716820000        # 2026-05-14 00:00:20 UTC (+24h announce window)
+genesis_headline_hex    = "0000000000000000000054f816d4e95007fb5ddd141c999a43e9c4ee56aefca3"
+# ^ Latest BTC tip at testnet-6 seed time. Embedded into the genesis
 #   coinbase slot as proof-of-no-prior-knowledge for the fair-launch
 #   ceremony.
 
